@@ -111,6 +111,9 @@ export type Settings = {
 
   // AdjustMask
   adjustMaskKernelSize: number
+
+  // InteractiveSeg
+  autoStartInteractiveSeg: boolean
 }
 
 type InteractiveSegState = {
@@ -361,6 +364,7 @@ const defaultValues: AppState = {
     enablePowerPaintV2: false,
     powerpaintTask: PowerPaintTask.text_guided,
     adjustMaskKernelSize: 12,
+    autoStartInteractiveSeg: false,
   },
 }
 
@@ -948,6 +952,10 @@ export const useStore = createWithEqualityFn<AppState & AppAction>()(
           state.editorState = castDraft(defaultValues.editorState)
           state.cropperState = defaultValues.cropperState
         })
+
+        if (get().settings.autoStartInteractiveSeg) {
+          get().updateInteractiveSegState({ isInteractiveSeg: true })
+        }
       },
 
       setCustomFile: (file: File) =>

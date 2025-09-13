@@ -59,6 +59,7 @@ const formSchema = z.object({
   removeBGModel: z.string(),
   realesrganModel: z.string(),
   interactiveSegModel: z.string(),
+  autoStartInteractiveSeg: z.boolean(),
 })
 
 const TAB_GENERAL = "General"
@@ -116,6 +117,7 @@ export function SettingsDialog() {
       removeBGModel: serverConfig?.removeBGModel,
       realesrganModel: serverConfig?.realesrganModel,
       interactiveSegModel: serverConfig?.interactiveSegModel,
+      autoStartInteractiveSeg: settings.autoStartInteractiveSeg,
     },
   })
 
@@ -135,6 +137,7 @@ export function SettingsDialog() {
       enableManualInpainting: values.enableManualInpainting,
       enableUploadMask: values.enableUploadMask,
       enableAutoExtractPrompt: values.enableAutoExtractPrompt,
+      autoStartInteractiveSeg: values.autoStartInteractiveSeg,
     })
 
     // TODO: validate input/output Directory
@@ -596,6 +599,31 @@ export function SettingsDialog() {
                   </SelectGroup>
                 </SelectContent>
               </Select>
+            </FormItem>
+          )}
+        />
+
+        <Separator />
+
+        <FormField
+          control={form.control}
+          name="autoStartInteractiveSeg"
+          render={({ field }) => (
+            <FormItem className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <FormLabel>Auto start interactive segmentation</FormLabel>
+                <FormDescription>
+                  When a new image is loaded, auto start interactive
+                  segmentation plugin
+                </FormDescription>
+              </div>
+              <FormControl>
+                <Switch
+                  checked={field.value}
+                  onCheckedChange={field.onChange}
+                  disabled={!interactiveSegEnabled}
+                />
+              </FormControl>
             </FormItem>
           )}
         />
