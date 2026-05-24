@@ -1,0 +1,97 @@
+services:
+
+  # ── Python / AI backend ──────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: docker/DevDockerfile
+
+    ports:
+      - "${PORT:-8080}:8080"
+
+    environment:
+      - DEVICE=${DEVICE:-cuda}
+      - MODEL=${MODEL:-lama}
+      - MODEL_DIR=/models
+      - PORT=${PORT:-8080}
+      - INTERACTIVE_SEG_MODEL=${INTERACTIVE_SEG_MODEL:-sam2_1_tiny}
+      - INTERACTIVE_SEG_DEVICE=${INTERACTIVE_SEG_DEVICE:-cuda}
+
+    volumes:
+      - models:/models
+
+    # NVIDIA GPU passthrough — requires the NVIDIA Container Toolkit on the host.
+    # Install guide: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    develop:
+      watch:
+        # Python source — instant sync into the editable install, then restart.
+        # web_app/ is excluded so the compiled frontend bundle isn't overwritten.
+        - action: sync+restart
+          path: ./iopaint
+          target: /app/iopaint
+          ignore:
+            - web_app/
+
+        # Dependency / packaging changes need a full image rebuild.
+        - action: rebuild
+          path: ./requirements.txt
+
+        - action: rebuild
+          path: ./setup.py
+
+  # ── Vite dev server (frontend) ───────────────────────────────────────────────
+  # Serves the React app with Hot Module Replacement so frontend changes are
+  # reflected in the browser instantly — no Docker rebuild required.
+  #
+  # Access the app at http://localhost:5173 (or FRONTEND_PORT) in dev.
+  # API and socket.io calls are transparently proxied to the app service.
+  #
+  # First startup installs node_modules (~30–60 s). Subsequent starts are fast
+  # because node_modules live in a named Docker volume that persists across
+  # restarts.
+  frontend:
+    image: node:20-slim
+    working_dir: /app
+    # Install packages then start Vite. npm ci is skipped when node_modules are
+    # already present and unchanged (the named volume persists between restarts).
+    command: >
+      sh -c "[ -d node_modules/.bin ] && echo 'node_modules present, skipping npm ci'
+             || npm ci;
+             npm run dev -- --host 0.0.0.0"
+    environment:
+      # Vite's dev proxy forwards /api and /socket.io to the Python backend.
+      - API_TARGET=http://app:8080
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      # Bind-mount the full web_app directory — all file changes are immediately
+      # visible inside the container. Vite's own file watcher handles HMR.
+      - ./web_app:/app
+      # Isolate node_modules inside the container so the host's node_modules
+      # (possibly absent or built for a different OS) don't interfere.
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      - app
+    develop:
+      watch:
+        # The bind-mount means source file changes are already live in the
+        # container — Vite's HMR picks them up without any compose action.
+        # We only need watch rules for the two things that require a restart:
+        - action: sync+restart
+          path: ./web_app/package.json
+          target: /app/package.json
+        - action: sync+restart
+          path: ./web_app/package-lock.json
+          target: /app/package-lock.json
+
+volumes:
+  models:
+  frontend_node_modules:

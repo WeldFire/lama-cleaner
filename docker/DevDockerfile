@@ -1,0 +1,69 @@
+# ─── Stage 1: Build frontend ──────────────────────────────────────────────────
+# Runs npm ci + vite build in an isolated Node image so the output lands at
+# /build/dist, which we later COPY into the Python image.
+FROM node:20-slim AS frontend
+
+WORKDIR /build
+
+# Copy lockfile first so npm ci is cached when only src changes
+COPY web_app/package*.json ./
+RUN npm ci --prefer-offline
+
+COPY web_app/ ./
+RUN npm run build
+
+
+# ─── Stage 2: GPU dev runtime ─────────────────────────────────────────────────
+# CUDA 12.1 + cuDNN 8 on Ubuntu 22.04. Matches RTX 30/40xx requirements.
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# System libraries required by OpenCV, ffmpeg, and font rendering
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.10 \
+        python3-pip \
+        python3.10-dev \
+        libsm6 libxext6 ffmpeg \
+        libfontconfig1 libxrender1 libgl1-mesa-glx \
+    && rm -rf /var/lib/apt/lists/* \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1 \
+    && update-alternatives --install /usr/bin/pip    pip    /usr/bin/pip3       1
+
+WORKDIR /app
+
+# ── PyTorch with CUDA 12.1 support ───────────────────────────────────────────
+# Install this layer first — it's ~2 GB and rarely changes, so it stays cached
+# even when requirements.txt or source files are updated.
+RUN pip install --upgrade pip && \
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# ── Python dependencies ───────────────────────────────────────────────────────
+# requirements.txt contains `torch>=2.0.0`; pip sees it already satisfied above
+# and won't downgrade/reinstall from the default PyPI index.
+COPY requirements.txt ./
+RUN pip install -r requirements.txt \
+        --extra-index-url https://download.pytorch.org/whl/cu121
+
+# ── Frontend build output ─────────────────────────────────────────────────────
+# Copy the compiled JS/CSS bundle into the location the Python package expects.
+# This path (iopaint/web_app/) is gitignored and built fresh every image build.
+COPY --from=frontend /build/dist ./iopaint/web_app/
+
+# ── Python source ─────────────────────────────────────────────────────────────
+# Install in *editable* mode (`-e`) so /app/iopaint is the live source tree.
+# docker-compose `watch` can then sync Python file changes directly into this
+# directory and a simple restart picks them up without rebuilding the image.
+COPY iopaint/ ./iopaint/
+COPY setup.py README.md ./
+RUN pip install -e . --no-deps
+
+# ── Entrypoint ────────────────────────────────────────────────────────────────
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 8080
+
+ENTRYPOINT ["/entrypoint.sh"]

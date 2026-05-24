@@ -14,14 +14,34 @@ from PIL import Image
 def get_sdpa_settings():
     if torch.cuda.is_available():
         old_gpu = torch.cuda.get_device_properties(0).major < 7
-        # only use Flash Attention on Ampere (8.0) or newer GPUs
-        use_flash_attn = torch.cuda.get_device_properties(0).major >= 8
-        if not use_flash_attn:
+        gpu_is_ampere_or_newer = torch.cuda.get_device_properties(0).major >= 8
+
+        # Flash Attention needs the flash_attn package in addition to an Ampere+ GPU.
+        # PyTorch's built-in SDPA will silently fall through to "No available kernel"
+        # if flash_attn is absent but math/mem-efficient kernels are both disabled,
+        # so we gate USE_FLASH_ATTN on whether the package is actually importable.
+        try:
+            import flash_attn  # noqa: F401
+            flash_attn_available = True
+        except ImportError:
+            flash_attn_available = False
+
+        use_flash_attn = gpu_is_ampere_or_newer and flash_attn_available
+
+        if gpu_is_ampere_or_newer and not flash_attn_available:
+            warnings.warn(
+                "Flash Attention is disabled because the flash_attn package is not installed. "
+                "Falling back to the math kernel. Install flash_attn for better throughput on Ampere+ GPUs.",
+                category=UserWarning,
+                stacklevel=2,
+            )
+        elif not gpu_is_ampere_or_newer:
             warnings.warn(
                 "Flash Attention is disabled as it requires a GPU with Ampere (8.0) CUDA capability.",
                 category=UserWarning,
                 stacklevel=2,
             )
+
         # keep math kernel for PyTorch versions before 2.2 (Flash Attention v2 is only
         # available on PyTorch 2.2+, while Flash Attention v1 cannot handle all cases)
         pytorch_version = tuple(int(v) for v in torch.__version__.split(".")[:2])

@@ -30,11 +30,7 @@ import Cropper from "./Cropper"
 import { InteractiveSegPoints } from "./InteractiveSeg"
 import useHotKey from "@/hooks/useHotkey"
 import Extender from "./Extender"
-import {
-  MAX_BRUSH_SIZE,
-  MIN_BRUSH_SIZE,
-  SHORTCUT_KEY_CHANGE_BRUSH_SIZE,
-} from "@/lib/const"
+import { MAX_BRUSH_SIZE, MIN_BRUSH_SIZE } from "@/lib/const"
 
 const TOOLBAR_HEIGHT = 200
 const COMPARE_SLIDER_DURATION_MS = 300
@@ -128,8 +124,8 @@ export default function Editor(props: EditorProps) {
   const [isDraging, setIsDraging] = useState(false)
 
   const [sliderPos, setSliderPos] = useState<number>(0)
-  const [isChangingBrushSizeByWheel, setIsChangingBrushSizeByWheel] =
-    useState<boolean>(false)
+  // True while Ctrl+Alt is held — mouse horizontal movement resizes the brush
+  const [isResizingBrush, setIsResizingBrush] = useState<boolean>(false)
 
   const hadDrawSomething = useCallback(() => {
     return curLineGroup.length !== 0
@@ -354,6 +350,22 @@ export default function Editor(props: EditorProps) {
 
   const onMouseMove = (ev: SyntheticEvent) => {
     const mouseEvent = ev.nativeEvent as MouseEvent
+
+    if (isResizingBrush) {
+      // While Ctrl+Alt is held, lock the brush ring in place and use horizontal
+      // mouse movement to resize instead. movementX > 0 = right = larger brush.
+      // 1 px of movement = 1 unit of brush size, clamped to [MIN, MAX].
+      if (mouseEvent.movementX !== 0) {
+        const next = Math.min(
+          MAX_BRUSH_SIZE,
+          Math.max(MIN_BRUSH_SIZE, baseBrushSize + mouseEvent.movementX)
+        )
+        setBaseBrushSize(next)
+      }
+      // Do NOT call setCoords — keeps the brush ring stationary.
+      return
+    }
+
     setCoords({ x: mouseEvent.pageX, y: mouseEvent.pageY })
   }
 
@@ -579,7 +591,8 @@ export default function Editor(props: EditorProps) {
   useHotKey("meta+s,ctrl+s", download)
 
   const toggleShowBrush = (newState: boolean) => {
-    if (newState !== showBrush && !isPanning && !isCropperExtenderResizing) {
+    // Also keep the brush visible while the user is actively resizing it
+    if (newState !== showBrush && !isPanning && !isCropperExtenderResizing && !isResizingBrush) {
       setShowBrush(newState)
     }
   }
@@ -591,11 +604,12 @@ export default function Editor(props: EditorProps) {
     if (isPanning) {
       return "grab"
     }
-    if (showBrush) {
+    // Hide the system cursor so the brush-ring acts as the cursor
+    if (showBrush || isResizingBrush) {
       return "none"
     }
     return undefined
-  }, [showBrush, isPanning, isProcessing])
+  }, [showBrush, isPanning, isProcessing, isResizingBrush])
 
   useHotKey(
     "[",
@@ -661,43 +675,42 @@ export default function Editor(props: EditorProps) {
     }
   )
 
+  // Ctrl+Alt + mouse-drag-left/right to resize brush.
+  // Raw window listeners are used (not useKeyPressEvent) because:
+  //  a) we need to detect *both* modifiers simultaneously, and
+  //  b) Alt alone steals browser-menu focus on Windows and immediately fires
+  //     blur, resetting state before the user can move the mouse.
   useEffect(() => {
+    const handleKeyDown = (ev: KeyboardEvent) => {
+      if (disableShortCuts) return
+      if (ev.ctrlKey && ev.altKey) {
+        ev.preventDefault()
+        setIsResizingBrush(true)
+        setShowBrush(true)
+      }
+    }
+
     const handleKeyUp = (ev: KeyboardEvent) => {
-      if (ev.key === SHORTCUT_KEY_CHANGE_BRUSH_SIZE) {
-        setIsChangingBrushSizeByWheel(false)
+      // Exit resize mode as soon as either modifier is released
+      if (ev.key === "Control" || ev.key === "Alt") {
+        setIsResizingBrush(false)
       }
     }
 
     const handleBlur = () => {
-      setIsChangingBrushSizeByWheel(false)
+      setIsResizingBrush(false)
     }
 
+    window.addEventListener("keydown", handleKeyDown)
     window.addEventListener("keyup", handleKeyUp)
     window.addEventListener("blur", handleBlur)
 
     return () => {
+      window.removeEventListener("keydown", handleKeyDown)
       window.removeEventListener("keyup", handleKeyUp)
       window.removeEventListener("blur", handleBlur)
     }
-  }, [])
-
-  useKeyPressEvent(
-    SHORTCUT_KEY_CHANGE_BRUSH_SIZE,
-    (ev) => {
-      if (!disableShortCuts) {
-        ev?.preventDefault()
-        ev?.stopPropagation()
-        setIsChangingBrushSizeByWheel(true)
-      }
-    },
-    (ev) => {
-      if (!disableShortCuts) {
-        ev?.preventDefault()
-        ev?.stopPropagation()
-        setIsChangingBrushSizeByWheel(false)
-      }
-    }
-  )
+  }, [disableShortCuts])
 
   const getCurScale = (): number => {
     let s = minScale
@@ -762,7 +775,7 @@ export default function Editor(props: EditorProps) {
           }
         }}
         panning={{ disabled: !isPanning, velocityDisabled: true }}
-        wheel={{ step: 0.05, wheelDisabled: isChangingBrushSizeByWheel }}
+        wheel={{ step: 0.05 }}
         centerZoomedOut
         alignmentAnimation={{ disabled: true }}
         centerOnInit
@@ -892,32 +905,15 @@ export default function Editor(props: EditorProps) {
     )
   }
 
-  const handleScroll = (event: React.WheelEvent<HTMLDivElement>) => {
-    // deltaY 是垂直滚动增量，正值表示向下滚动，负值表示向上滚动
-    // deltaX 是水平滚动增量，正值表示向右滚动，负值表示向左滚动
-    if (!isChangingBrushSizeByWheel) {
-      return
-    }
-
-    const { deltaY } = event
-    // console.log(`水平滚动增量: ${deltaX}, 垂直滚动增量: ${deltaY}`)
-    if (deltaY > 0) {
-      increaseBaseBrushSize()
-    } else if (deltaY < 0) {
-      decreaseBaseBrushSize()
-    }
-  }
-
   return (
     <div
       className="flex w-screen h-screen justify-center items-center"
       aria-hidden="true"
       onMouseMove={onMouseMove}
       onMouseUp={onPointerUp}
-      onWheel={handleScroll}
     >
       {renderCanvas()}
-      {showBrush &&
+      {(showBrush || isResizingBrush) &&
         !isInpainting &&
         !isPanning &&
         (interactiveSegState.isInteractiveSeg

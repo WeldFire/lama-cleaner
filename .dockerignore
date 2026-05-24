@@ -1,0 +1,40 @@
+# Git
+.git
+.gitattributes
+.gitignore
+
+# Python bytecode and caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+.eggs/
+
+# Virtual envs / conda
+.venv/
+venv/
+env/
+.conda/
+
+# Frontend build artifacts — built fresh inside the Dockerfile
+web_app/node_modules/
+web_app/dist/
+
+# Built frontend embedded in the Python package (also built inside Dockerfile)
+iopaint/web_app/
+
+# Local environment / secrets
+.env
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor configs
+.vscode/
+.idea/
+
+# Docker files themselves (not needed inside the build context)
+docker-compose.yml

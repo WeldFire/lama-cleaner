@@ -63,6 +63,10 @@ export function Shortcuts() {
             <ShortCut content="Reset Zoom/Pan" keys={["Esc"]} />
             <ShortCut content="Decrease Brush Size" keys={["["]} />
             <ShortCut content="Increase Brush Size" keys={["]"]} />
+            <ShortCut
+              content="Resize Brush"
+              keys={["Ctrl", "Alt", "← →"]}
+            />
             <ShortCut content="View Original Image" keys={["Hold Tab"]} />
 
             <ShortCut content="Undo" keys={[CmdOrCtrl(), "Z"]} />
