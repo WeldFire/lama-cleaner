@@ -455,6 +455,14 @@ class RunPluginRequest(BaseModel):
         [], description="Clicks for interactive seg, [[x,y,0/1], [x2,y2,0/1]]"
     )
     scale: float = Field(2.0, description="Scale for upscaling")
+    # Padding applied via dilation to the interactive segmentation mask before
+    # returning it to the frontend.  0 means no padding (default).
+    interactive_seg_mask_padding: int = Field(
+        0,
+        description="Padding in pixels added around the interactive segmentation mask via dilation",
+        ge=0,
+        le=50,
+    )
 
 
 MediaTab = Literal["input", "output", "mask"]

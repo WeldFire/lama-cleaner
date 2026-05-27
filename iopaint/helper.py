@@ -390,18 +390,23 @@ def adjust_mask(mask: np.ndarray, kernel_size: int, operate):
     return res_mask
 
 
-def gen_frontend_mask(bgr_or_gray_mask):
+def gen_frontend_mask(bgr_or_gray_mask, padding: int = 0):
     if len(bgr_or_gray_mask.shape) == 3 and bgr_or_gray_mask.shape[2] != 1:
         bgr_or_gray_mask = cv2.cvtColor(bgr_or_gray_mask, cv2.COLOR_BGR2GRAY)
 
     # fronted brush color "ffcc00bb"
-    # TODO: how to set kernel size?
-    kernel_size = 9
-    bgr_or_gray_mask = cv2.dilate(
-        bgr_or_gray_mask,
-        np.ones((kernel_size, kernel_size), np.uint8),
-        iterations=1,
-    )
+    # Apply optional dilation (padding) when the user has configured a non-zero
+    # mask padding in Settings.  No dilation is applied by default (padding=0)
+    # since SAM already produces precise boundaries — inflating them with a fixed
+    # kernel made the displayed mask noticeably larger than the selected region.
+    if padding > 0:
+        kernel_size = 2 * padding + 1
+        bgr_or_gray_mask = cv2.dilate(
+            bgr_or_gray_mask,
+            np.ones((kernel_size, kernel_size), np.uint8),
+            iterations=1,
+        )
+
     res_mask = np.zeros(
         (bgr_or_gray_mask.shape[0], bgr_or_gray_mask.shape[1], 4), dtype=np.uint8
     )

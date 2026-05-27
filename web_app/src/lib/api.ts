@@ -129,7 +129,8 @@ export async function runPlugin(
   name: string,
   imageFile: File,
   upscale?: number,
-  clicks?: number[][]
+  clicks?: number[][],
+  maskPadding?: number
 ) {
   const imageBase64 = await convertToBase64(imageFile)
   const p = genMask ? "run_plugin_gen_mask" : "run_plugin_gen_image"
@@ -143,6 +144,7 @@ export async function runPlugin(
       image: imageBase64,
       scale: upscale,
       clicks,
+      interactive_seg_mask_padding: maskPadding ?? 0,
     }),
   })
   if (res.ok) {

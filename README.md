@@ -107,6 +107,69 @@ You can see more information about the available models and plugins supported by
 
 ## Development
 
+### Docker (recommended)
+
+The easiest way to run a fully hot-reloading dev environment is with Docker Compose Watch.
+Both the Python backend and the React frontend update automatically as you edit files — no
+manual restarts needed.
+
+**Prerequisites**
+
+- [Docker Desktop](https://docs.docker.com/get-docker/) (or Docker Engine + Compose plugin)
+- For GPU support: [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+
+**Start the stack with file watching**
+
+```bash
+docker compose up --watch
+```
+
+| What changes | What happens | Latency |
+|---|---|---|
+| `iopaint/**` Python source | Synced into the container instantly; backend restarts | ~5 s |
+| `web_app/src/**` frontend source (port **5173**) | Picked up by Vite's HMR; browser updates without a page reload | < 1 s |
+| `web_app/src/**` frontend source (port **8080**) | Image rebuild triggered; only the fast end layers re-run | ~30–60 s |
+| `requirements.txt` / `setup.py` | Full image rebuild (all layers) | ~10–15 min |
+| `web_app/package.json` / `package-lock.json` | Frontend container restarts and re-runs `npm ci` | ~60 s |
+
+**Access the app**
+
+| Service | URL | Notes |
+|---|---|---|
+| Frontend (Vite HMR dev server) | http://localhost:5173 | Instant HMR — recommended for active frontend work |
+| Backend (built bundle) | http://localhost:8080 | Auto-rebuilds on save (~30–60 s) — good for QA / testing |
+
+**Configuration via environment variables**
+
+Copy `.env.example` to `.env` (or export variables directly) to override defaults:
+
+```bash
+# GPU device for inpainting model (cuda / cpu / mps)
+DEVICE=cuda
+
+# Inpainting model to load on startup
+MODEL=lama
+
+# Interactive segmentation model (sam2_1_tiny / sam2_1_small / sam2_1_base / sam2_1_large)
+INTERACTIVE_SEG_MODEL=sam2_1_tiny
+
+# Device for the interactive seg model
+INTERACTIVE_SEG_DEVICE=cuda
+
+# Port the backend listens on (also used by the Vite proxy)
+PORT=8080
+
+# Port the Vite dev server is exposed on
+FRONTEND_PORT=5173
+```
+
+Model weights are stored in a named Docker volume (`models`) so they are downloaded
+once and reused across restarts.
+
+---
+
+### Local (without Docker)
+
 Install [nodejs](https://nodejs.org/en), then install the frontend dependencies.
 
 ```bash

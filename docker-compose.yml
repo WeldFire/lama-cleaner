@@ -40,6 +40,19 @@ services:
           ignore:
             - web_app/
 
+        # Frontend source changes — rebuilds the JS/CSS bundle baked into the
+        # app image and restarts the container.  Only the two fast layers at the
+        # end of the Dockerfile re-run (COPY dist + pip install -e .); the large
+        # CUDA and Python dependency layers stay cached, so a full rebuild takes
+        # ~30–60 s rather than the 10–15 min a cold build would take.
+        # node_modules/ and dist/ are ignored — they are either irrelevant or
+        # produced by the build itself.
+        - action: rebuild
+          path: ./web_app
+          ignore:
+            - node_modules/
+            - dist/
+
         # Dependency / packaging changes need a full image rebuild.
         - action: rebuild
           path: ./requirements.txt

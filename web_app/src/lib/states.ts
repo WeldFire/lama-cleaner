@@ -111,6 +111,12 @@ export type Settings = {
 
   // AdjustMask
   adjustMaskKernelSize: number
+
+  // Interactive Segmentation
+  // Extra dilation (px) applied to the SAM mask before display/inpainting (0 = off)
+  interactiveSegMaskPadding: number
+  // react-hotkeys-hook key string that activates interactive seg mode (empty = no hotkey)
+  interactiveSegHotkey: string
 }
 
 type InteractiveSegState = {
@@ -361,6 +367,8 @@ const defaultValues: AppState = {
     enablePowerPaintV2: false,
     powerpaintTask: PowerPaintTask.text_guided,
     adjustMaskKernelSize: 12,
+    interactiveSegMaskPadding: 0,
+    interactiveSegHotkey: "",
   },
 }
 
@@ -902,6 +910,10 @@ export const useStore = createWithEqualityFn<AppState & AppAction>()(
             ...defaultValues.interactiveSegState,
           })
         })
+        // Always run inpainting immediately on Accept — the user has explicitly
+        // confirmed their selection, so we treat it the same as File Manager
+        // mask selection regardless of the Run Manually toggle.
+        get().runInpainting()
       },
 
       handleFileManagerMaskSelect: async (blob: Blob) => {
@@ -1145,7 +1157,16 @@ export const useStore = createWithEqualityFn<AppState & AppAction>()(
     })),
     {
       name: "ZUSTAND_STATE", // name of the item in the storage (must be unique)
-      version: 2,
+      version: 3,
+      // Migrate persisted state across version bumps so existing users keep
+      // their settings while new fields get their defaults injected.
+      migrate: (persistedState: any, version: number) => {
+        if (version < 3 && persistedState?.settings) {
+          persistedState.settings.interactiveSegMaskPadding = 0
+          persistedState.settings.interactiveSegHotkey = ""
+        }
+        return persistedState
+      },
       partialize: (state) =>
         Object.fromEntries(
           Object.entries(state).filter(([key]) =>

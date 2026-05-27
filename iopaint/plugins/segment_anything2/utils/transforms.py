@@ -6,6 +6,7 @@
 
 import torch
 import torch.nn as nn
+from torch.nn import functional as F
 from torchvision.transforms import Normalize, Resize, ToTensor
 
 
@@ -72,6 +73,15 @@ class SAM2Transforms(nn.Module):
 
     def postprocess_masks(self, masks: torch.Tensor, orig_hw) -> torch.Tensor:
         """
-        Perform PostProcessing on output masks.
+        Upsample the low-resolution decoder output masks to the original image
+        resolution so the returned mask aligns pixel-for-pixel with the input.
+
+        Without this the mask decoder's 256×256 output is used as-is, producing
+        a blocky result that looks like a tiny mask stretched over the full image.
         """
-        return masks
+        return F.interpolate(
+            masks.float(),
+            orig_hw,
+            mode="bilinear",
+            align_corners=False,
+        )

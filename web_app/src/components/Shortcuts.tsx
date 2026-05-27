@@ -9,6 +9,7 @@ import {
   DialogTrigger,
 } from "./ui/dialog"
 import useHotKey from "@/hooks/useHotkey"
+import { useStore } from "@/lib/states"
 
 interface ShortcutProps {
   content: string
@@ -43,6 +44,9 @@ const CmdOrCtrl = () => {
 
 export function Shortcuts() {
   const [open, toggleOpen] = useToggle(false)
+  const interactiveSegHotkey = useStore(
+    (state) => state.settings.interactiveSegHotkey
+  )
 
   useHotKey("h", () => {
     toggleOpen()
@@ -68,6 +72,29 @@ export function Shortcuts() {
               keys={["Ctrl", "Alt", "← →"]}
             />
             <ShortCut content="View Original Image" keys={["Hold Tab"]} />
+            {interactiveSegHotkey && (
+              <ShortCut
+                content="Interactive Segmentation"
+                keys={interactiveSegHotkey
+                  .split("+")
+                  .map((k) =>
+                    k === "ctrl"
+                      ? "Ctrl"
+                      : k === "shift"
+                      ? "Shift"
+                      : k === "alt"
+                      ? "Alt"
+                      : k === "meta"
+                      ? "Meta"
+                      : k.length === 1
+                      ? k.toUpperCase()
+                      : k
+                  )}
+              />
+            )}
+            <ShortCut content="Accept Seg Mask" keys={["Enter"]} />
+            <ShortCut content="Cancel Seg / Undo Point" keys={["Esc", "Ctrl+Z"]} />
+            <ShortCut content="Expand / Shrink Seg Mask" keys={["Ctrl", "Alt", "← →"]} />
 
             <ShortCut content="Undo" keys={[CmdOrCtrl(), "Z"]} />
             <ShortCut content="Redo" keys={[CmdOrCtrl(), "Shift", "Z"]} />

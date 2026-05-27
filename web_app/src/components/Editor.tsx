@@ -7,7 +7,7 @@ import {
   TransformWrapper,
 } from "react-zoom-pan-pinch"
 import { useKeyPressEvent } from "react-use"
-import { downloadToOutput, runPlugin } from "@/lib/api"
+import { downloadToOutput, runPlugin, postAdjustMask } from "@/lib/api"
 import { IconButton } from "@/components/ui/button"
 import {
   askWritePermission,
@@ -18,6 +18,7 @@ import {
   generateMask,
   isMidClick,
   isRightClick,
+  loadImage,
   mouseXY,
   srcToFile,
 } from "@/lib/utils"
@@ -29,6 +30,7 @@ import { useStore } from "@/lib/states"
 import Cropper from "./Cropper"
 import { InteractiveSegPoints } from "./InteractiveSeg"
 import useHotKey from "@/hooks/useHotkey"
+import { useHotkeys } from "react-hotkeys-hook"
 import Extender from "./Extender"
 import { MAX_BRUSH_SIZE, MIN_BRUSH_SIZE } from "@/lib/const"
 
@@ -55,6 +57,8 @@ export default function Editor(props: EditorProps) {
     setBaseBrushSize,
     interactiveSegState,
     updateInteractiveSegState,
+    resetInteractiveSegState,
+    handleInteractiveSegAccept,
     handleCanvasMouseDown,
     handleCanvasMouseMove,
     undo,
@@ -80,6 +84,8 @@ export default function Editor(props: EditorProps) {
     state.setBaseBrushSize,
     state.interactiveSegState,
     state.updateInteractiveSegState,
+    state.resetInteractiveSegState,
+    state.handleInteractiveSegAccept,
     state.handleCanvasMouseDown,
     state.handleCanvasMouseMove,
     state.undo,
@@ -126,6 +132,31 @@ export default function Editor(props: EditorProps) {
   const [sliderPos, setSliderPos] = useState<number>(0)
   // True while Ctrl+Alt is held — mouse horizontal movement resizes the brush
   const [isResizingBrush, setIsResizingBrush] = useState<boolean>(false)
+
+  // Accumulated pixel expansion (positive = dilate, negative = erode) for the
+  // interactive seg mask live-resize preview.  Committed to the actual mask on
+  // Ctrl/Alt key-up by calling postAdjustMask.
+  const [segExpansion, setSegExpansion] = useState<number>(0)
+  // Refs so the async key-up handler can read the latest values without needing
+  // them in the useEffect dependency array (which would re-attach listeners).
+  const segExpansionRef = useRef<number>(0)
+  const isInteractiveSegRef = useRef<boolean>(false)
+  const tmpMaskRef = useRef<HTMLImageElement | null>(null)
+  // Total expansion that has been permanently committed across all Ctrl+Alt drags
+  // in the current interactive seg session.  When the user adds/removes a click
+  // point and SAM returns a fresh mask, this amount is automatically re-applied
+  // so the expansion is preserved.  Reset when interactive seg mode exits.
+  const persistedExpansionRef = useRef<number>(0)
+  useEffect(() => {
+    isInteractiveSegRef.current = interactiveSegState.isInteractiveSeg
+    // Reset persisted expansion whenever interactive seg mode is exited (accept or cancel)
+    if (!interactiveSegState.isInteractiveSeg) {
+      persistedExpansionRef.current = 0
+    }
+  }, [interactiveSegState.isInteractiveSeg])
+  useEffect(() => {
+    tmpMaskRef.current = interactiveSegState.tmpInteractiveSegMask
+  }, [interactiveSegState.tmpInteractiveSegMask])
 
   const hadDrawSomething = useCallback(() => {
     return curLineGroup.length !== 0
@@ -183,13 +214,58 @@ export default function Editor(props: EditorProps) {
       interactiveSegState.isInteractiveSeg &&
       interactiveSegState.tmpInteractiveSegMask
     ) {
-      context.drawImage(
-        interactiveSegState.tmpInteractiveSegMask,
-        0,
-        0,
-        imageWidth,
-        imageHeight
-      )
+      const mask = interactiveSegState.tmpInteractiveSegMask
+      if (segExpansion !== 0) {
+        // Dilation / erosion preview using 8-directional offset drawing.
+        // Drawing the mask shifted in all 8 cardinal+diagonal directions by
+        // `e` pixels produces a box dilation that looks like hard pixel
+        // addition to the perimeter — much closer to the actual cv2 morphology
+        // result than a CSS shadow blur.
+        //
+        // For erosion (negative e) we shift INWARD: the image is drawn at a
+        // smaller target rect centred in the canvas, approximating shrinkage.
+        const e = segExpansion
+        const offscreen = document.createElement("canvas")
+        offscreen.width = imageWidth
+        offscreen.height = imageHeight
+        const offCtx = offscreen.getContext("2d")!
+
+        if (e > 0) {
+          // Dilation: union of the mask shifted in all 8 directions.
+          // A pixel is included if the original mask covers any point within
+          // distance e — which is exactly box dilation.
+          const offsets: [number, number][] = [
+            [-e, -e], [0, -e], [e, -e],
+            [-e,  0], [0,  0], [e,  0],
+            [-e,  e], [0,  e], [e,  e],
+          ]
+          offsets.forEach(([dx, dy]) => {
+            offCtx.drawImage(mask, dx, dy, imageWidth, imageHeight)
+          })
+        } else {
+          // Erosion: intersection of the mask with all 8 shifted copies.
+          // A pixel survives only if ALL 8 neighbors at distance abs are also
+          // masked — exactly the box-erosion condition.  This makes the mask
+          // shrink uniformly inward from its own perimeter rather than toward
+          // the image centre.
+          const abs = Math.abs(e)
+          // Seed with the original mask
+          offCtx.drawImage(mask, 0, 0, imageWidth, imageHeight)
+          // Progressively intersect with each shifted copy
+          offCtx.globalCompositeOperation = "destination-in"
+          const offsets: [number, number][] = [
+            [-abs, -abs], [0, -abs], [abs, -abs],
+            [-abs,   0 ],            [abs,   0 ],
+            [-abs,  abs], [0,  abs], [abs,  abs],
+          ]
+          offsets.forEach(([dx, dy]) => {
+            offCtx.drawImage(mask, dx, dy, imageWidth, imageHeight)
+          })
+        }
+        context.drawImage(offscreen, 0, 0)
+      } else {
+        context.drawImage(mask, 0, 0, imageWidth, imageHeight)
+      }
     }
     drawLines(context, curLineGroup)
   }, [
@@ -197,6 +273,7 @@ export default function Editor(props: EditorProps) {
     extraMasks,
     isOriginalLoaded,
     interactiveSegState,
+    segExpansion,
     context,
     curLineGroup,
     imageHeight,
@@ -215,6 +292,44 @@ export default function Editor(props: EditorProps) {
   const hadRunInpainting = () => {
     return renders.length !== 0
   }
+
+  // Applies expansion/erosion to a mask image via the backend adjust_mask
+  // endpoint (pure cv2 morphology — no ML model involved).  Returns the new
+  // mask image, or the original if the call fails / expansion is zero.
+  const applyExpansionToMask = useCallback(
+    async (expansion: number, mask: HTMLImageElement): Promise<HTMLImageElement> => {
+      if (expansion === 0) return mask
+      try {
+        const maskFile = await srcToFile(mask.currentSrc, "mask.png", "image/png")
+        const newMaskBlob = await postAdjustMask(
+          maskFile,
+          expansion > 0 ? "expand" : "shrink",
+          Math.abs(expansion)
+        )
+        const newMask = new Image()
+        await loadImage(newMask, URL.createObjectURL(newMaskBlob))
+        return newMask
+      } catch {
+        // Keep the original mask if the call fails
+        return mask
+      }
+    },
+    []
+  )
+
+  // Commits a Ctrl+Alt drag: applies expansion to the current mask, updates
+  // state, and accumulates the amount into persistedExpansionRef so it will
+  // be re-applied automatically the next time SAM returns a fresh mask.
+  const commitSegExpansion = useCallback(
+    async (expansion: number, mask: HTMLImageElement) => {
+      if (expansion === 0) return
+      const newMask = await applyExpansionToMask(expansion, mask)
+      updateInteractiveSegState({ tmpInteractiveSegMask: newMask })
+      // Accumulate so point add/remove re-applies the same total expansion
+      persistedExpansionRef.current += expansion
+    },
+    [applyExpansionToMask, updateInteractiveSegState]
+  )
 
   const getCurrentWidthHeight = useCallback(() => {
     let width = 512
@@ -333,7 +448,13 @@ export default function Editor(props: EditorProps) {
     if (isProcessing) {
       return
     }
-
+    // Interactive seg cancel takes priority over zoom reset
+    if (interactiveSegState.isInteractiveSeg) {
+      resetInteractiveSegState()
+      setSegExpansion(0)
+      segExpansionRef.current = 0
+      return
+    }
     if (isDraging) {
       setIsDraging(false)
     } else {
@@ -345,24 +466,52 @@ export default function Editor(props: EditorProps) {
     isDraging,
     isInpainting,
     resetZoom,
-    // drawOnCurrentRender,
+    interactiveSegState.isInteractiveSeg,
+    resetInteractiveSegState,
   ])
+
+  // Enter key accepts the current interactive seg mask (if one exists)
+  useHotKey(
+    "enter",
+    () => {
+      if (
+        interactiveSegState.isInteractiveSeg &&
+        interactiveSegState.tmpInteractiveSegMask
+      ) {
+        handleInteractiveSegAccept()
+      }
+    },
+    [
+      interactiveSegState.isInteractiveSeg,
+      interactiveSegState.tmpInteractiveSegMask,
+      handleInteractiveSegAccept,
+    ]
+  )
 
   const onMouseMove = (ev: SyntheticEvent) => {
     const mouseEvent = ev.nativeEvent as MouseEvent
 
     if (isResizingBrush) {
-      // While Ctrl+Alt is held, lock the brush ring in place and use horizontal
-      // mouse movement to resize instead. movementX > 0 = right = larger brush.
-      // 1 px of movement = 1 unit of brush size, clamped to [MIN, MAX].
       if (mouseEvent.movementX !== 0) {
-        const next = Math.min(
-          MAX_BRUSH_SIZE,
-          Math.max(MIN_BRUSH_SIZE, baseBrushSize + mouseEvent.movementX)
-        )
-        setBaseBrushSize(next)
+        if (isInteractiveSegRef.current && tmpMaskRef.current) {
+          // In interactive seg mode: expand/shrink the seg mask instead of
+          // resizing the brush.  Clamp total expansion to [-50, 50] px.
+          const next = Math.min(
+            50,
+            Math.max(-50, segExpansionRef.current + mouseEvent.movementX)
+          )
+          segExpansionRef.current = next
+          setSegExpansion(next)
+        } else {
+          // Normal brush resize (Ctrl+Alt outside interactive seg mode)
+          const next = Math.min(
+            MAX_BRUSH_SIZE,
+            Math.max(MIN_BRUSH_SIZE, baseBrushSize + mouseEvent.movementX)
+          )
+          setBaseBrushSize(next)
+        }
       }
-      // Do NOT call setCoords — keeps the brush ring stationary.
+      // Do NOT call setCoords — keeps the brush ring / cursor stationary.
       return
     }
 
@@ -399,14 +548,19 @@ export default function Editor(props: EditorProps) {
         PluginName.InteractiveSeg,
         targetFile,
         undefined,
-        newClicks
+        newClicks,
+        settings.interactiveSegMaskPadding
       )
       const { blob } = res
+      // Load the fresh SAM mask, then re-apply any persisted Ctrl+Alt expansion
+      // so the grow/shrink amount survives adding or removing click points.
       const img = new Image()
-      img.onload = () => {
-        updateInteractiveSegState({ tmpInteractiveSegMask: img })
-      }
-      img.src = blob
+      await loadImage(img, blob)
+      const finalMask =
+        persistedExpansionRef.current !== 0
+          ? await applyExpansionToMask(persistedExpansionRef.current, img)
+          : img
+      updateInteractiveSegState({ tmpInteractiveSegMask: finalMask })
     } catch (e: any) {
       toast({
         variant: "destructive",
@@ -498,9 +652,27 @@ export default function Editor(props: EditorProps) {
 
   const handleUndo = (keyboardEvent: KeyboardEvent | SyntheticEvent) => {
     keyboardEvent.preventDefault()
-    undo()
+    if (interactiveSegState.isInteractiveSeg) {
+      // In interactive seg mode, Ctrl+Z removes the last click point and
+      // re-runs SAM with the remaining points.  If no points remain, the
+      // temporary mask is cleared.
+      const newClicks = interactiveSegState.clicks.slice(0, -1)
+      updateInteractiveSegState({ clicks: newClicks })
+      if (newClicks.length > 0) {
+        runInteractiveSeg(newClicks)
+      } else {
+        updateInteractiveSegState({ tmpInteractiveSegMask: null })
+      }
+    } else {
+      undo()
+    }
   }
-  useHotKey("meta+z,ctrl+z", handleUndo)
+  useHotKey("meta+z,ctrl+z", handleUndo, [
+    interactiveSegState.isInteractiveSeg,
+    interactiveSegState.clicks,
+    updateInteractiveSegState,
+    undo,
+  ])
 
   const handleRedo = (keyboardEvent: KeyboardEvent | SyntheticEvent) => {
     keyboardEvent.preventDefault()
@@ -560,10 +732,16 @@ export default function Editor(props: EditorProps) {
       return
     }
 
+    // Nothing to download if no inpainting has been run yet, or if the last
+    // render element is somehow missing (e.g. stale closure edge-case).
+    const curSrc = renders[renders.length - 1]?.currentSrc
+    if (!curSrc) {
+      return
+    }
+
     // TODO: download to output directory
     const name = file.name.replace(/(\.[\w\d_-]+)$/i, "_cleanup$1")
-    const curRender = renders[renders.length - 1]
-    downloadImage(curRender.currentSrc, name)
+    downloadImage(curSrc, name)
     if (settings.enableDownloadMask) {
       let maskFileName = file.name.replace(/(\.[\w\d_-]+)$/i, "_mask$1")
       maskFileName = maskFileName.replace(/\.[^/.]+$/, ".jpg")
@@ -589,6 +767,20 @@ export default function Editor(props: EditorProps) {
   ])
 
   useHotKey("meta+s,ctrl+s", download)
+
+  // Block the browser's "Save Page As" dialog for Ctrl/Cmd+S.
+  // A dedicated capture-phase listener is the most reliable cross-browser way
+  // to prevent the default before the browser acts on it — independent of the
+  // download hotkey registration above.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault()
+      }
+    }
+    window.addEventListener("keydown", handler, { capture: true })
+    return () => window.removeEventListener("keydown", handler, true)
+  }, [])
 
   const toggleShowBrush = (newState: boolean) => {
     // Also keep the brush visible while the user is actively resizing it
@@ -694,6 +886,18 @@ export default function Editor(props: EditorProps) {
       // Exit resize mode as soon as either modifier is released
       if (ev.key === "Control" || ev.key === "Alt") {
         setIsResizingBrush(false)
+
+        // If we were expanding/shrinking an interactive seg mask, commit the
+        // accumulated expansion now via the backend adjust_mask endpoint.
+        if (
+          isInteractiveSegRef.current &&
+          tmpMaskRef.current &&
+          segExpansionRef.current !== 0
+        ) {
+          commitSegExpansion(segExpansionRef.current, tmpMaskRef.current)
+          segExpansionRef.current = 0
+          setSegExpansion(0)
+        }
       }
     }
 
@@ -710,7 +914,40 @@ export default function Editor(props: EditorProps) {
       window.removeEventListener("keyup", handleKeyUp)
       window.removeEventListener("blur", handleBlur)
     }
-  }, [disableShortCuts])
+  }, [disableShortCuts, commitSegExpansion])
+
+  // Suppress the browser context menu globally while interactive seg is active
+  // so right-clicking to add a negative point doesn't also open the menu.
+  // A document-level listener in capture phase is more reliable than relying
+  // solely on React's synthetic onContextMenu (which fires after the browser
+  // may have already started showing the menu).
+  useEffect(() => {
+    if (!interactiveSegState.isInteractiveSeg) return
+    const prevent = (e: MouseEvent) => e.preventDefault()
+    document.addEventListener("contextmenu", prevent, { capture: true })
+    return () => document.removeEventListener("contextmenu", prevent, true)
+  }, [interactiveSegState.isInteractiveSeg])
+
+  // User-configurable hotkey to enter interactive segmentation mode.
+  // Uses useHotkeys directly (rather than useHotKey) so we can disable it
+  // entirely when no hotkey has been configured, avoiding empty-string issues.
+  useHotkeys(
+    settings.interactiveSegHotkey || "F13",
+    () => {
+      if (!isProcessing) {
+        updateInteractiveSegState({ isInteractiveSeg: true })
+      }
+    },
+    {
+      enabled: !disableShortCuts && !!settings.interactiveSegHotkey,
+    },
+    [
+      disableShortCuts,
+      settings.interactiveSegHotkey,
+      isProcessing,
+      updateInteractiveSegState,
+    ]
+  )
 
   const getCurScale = (): number => {
     let s = minScale

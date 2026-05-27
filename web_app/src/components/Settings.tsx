@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/form"
 import { Switch } from "./ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
 import { useQuery } from "@tanstack/react-query"
 import { getServerConfig, switchModel, switchPluginModel } from "@/lib/api"
@@ -47,6 +47,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select"
+import { Slider } from "./ui/slider"
 
 const formSchema = z.object({
   enableFileManager: z.boolean(),
@@ -67,6 +68,116 @@ const TAB_PLUGINS = "Plugins"
 // const TAB_FILE_MANAGER = "File Manager"
 
 const TAB_NAMES = [TAB_MODEL, TAB_GENERAL, TAB_PLUGINS]
+
+// Formats a react-hotkeys-hook key string (e.g. "ctrl+i") for human display.
+function formatHotkey(key: string): string {
+  if (!key) return "None"
+  return key
+    .split("+")
+    .map((part) => {
+      if (part === "ctrl") return "Ctrl"
+      if (part === "shift") return "Shift"
+      if (part === "alt") return "Alt"
+      if (part === "meta") return "Meta"
+      return part.length === 1 ? part.toUpperCase() : part
+    })
+    .join(" + ")
+}
+
+interface InteractiveSegHotkeyRecorderProps {
+  value: string
+  disabled?: boolean
+  onChange: (key: string) => void
+}
+
+// Click-to-record hotkey widget.
+// While recording: captures the next non-modifier keydown and saves the
+// combination as a react-hotkeys-hook string (e.g. "ctrl+shift+i").
+// Press Escape to cancel, or Backspace to clear the hotkey.
+function InteractiveSegHotkeyRecorder(
+  props: InteractiveSegHotkeyRecorderProps
+) {
+  const { value, disabled, onChange } = props
+  const [isRecording, setIsRecording] = useState(false)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (!isRecording) return
+
+    const handleKeyDown = (ev: KeyboardEvent) => {
+      ev.preventDefault()
+      ev.stopPropagation()
+
+      // Escape cancels without saving
+      if (ev.key === "Escape") {
+        setIsRecording(false)
+        return
+      }
+
+      // Backspace clears the hotkey
+      if (ev.key === "Backspace") {
+        onChange("")
+        setIsRecording(false)
+        return
+      }
+
+      // Ignore bare modifier presses — wait for an actual key
+      if (
+        ev.key === "Control" ||
+        ev.key === "Shift" ||
+        ev.key === "Alt" ||
+        ev.key === "Meta"
+      ) {
+        return
+      }
+
+      // Build react-hotkeys-hook format: "ctrl+shift+key"
+      const parts: string[] = []
+      if (ev.ctrlKey) parts.push("ctrl")
+      if (ev.altKey) parts.push("alt")
+      if (ev.shiftKey) parts.push("shift")
+      if (ev.metaKey) parts.push("meta")
+      // Use lowercase for letter keys; keep special keys as-is (e.g. "F1")
+      parts.push(ev.key.length === 1 ? ev.key.toLowerCase() : ev.key)
+
+      onChange(parts.join("+"))
+      setIsRecording(false)
+    }
+
+    window.addEventListener("keydown", handleKeyDown, { capture: true })
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, { capture: true })
+    }
+  }, [isRecording, onChange])
+
+  return (
+    <FormItem className="flex items-center justify-between">
+      <div className="space-y-0.5">
+        <FormLabel>Activation Hotkey</FormLabel>
+        <FormDescription>
+          Key to activate interactive segmentation mode. Click to record.
+        </FormDescription>
+      </div>
+      <button
+        ref={buttonRef}
+        type="button"
+        disabled={disabled}
+        onClick={() => setIsRecording(true)}
+        onBlur={() => setIsRecording(false)}
+        className={cn(
+          "min-w-[120px] rounded-md border px-3 py-1.5 text-sm text-right",
+          "focus:outline-none focus:ring-2 focus:ring-ring",
+          disabled
+            ? "cursor-not-allowed opacity-50"
+            : "cursor-pointer hover:bg-muted",
+          isRecording && "border-primary bg-muted"
+        )}
+      >
+        {isRecording ? "Press a key…" : formatHotkey(value)}
+      </button>
+    </FormItem>
+  )
+}
 
 export function SettingsDialog() {
   const [open, toggleOpen] = useToggle(false)
@@ -598,6 +709,43 @@ export function SettingsDialog() {
               </Select>
             </FormItem>
           )}
+        />
+
+        <Separator />
+
+        {/* Mask padding slider — controls dilation applied to the SAM mask */}
+        <FormItem className="flex items-center justify-between gap-4">
+          <div className="space-y-0.5 shrink-0">
+            <FormLabel>Mask Padding</FormLabel>
+            <FormDescription>
+              Extra pixels added around the segmentation mask (0 = off)
+            </FormDescription>
+          </div>
+          <div className="flex items-center gap-3 w-[180px]">
+            <Slider
+              className="w-full"
+              min={0}
+              max={50}
+              step={1}
+              disabled={!interactiveSegEnabled}
+              value={[settings.interactiveSegMaskPadding]}
+              onValueChange={(vals) =>
+                updateSettings({ interactiveSegMaskPadding: vals[0] })
+              }
+            />
+            <span className="w-8 text-right text-sm tabular-nums">
+              {settings.interactiveSegMaskPadding}
+            </span>
+          </div>
+        </FormItem>
+
+        <Separator />
+
+        {/* Hotkey recorder — click to capture a key for activating interactive seg */}
+        <InteractiveSegHotkeyRecorder
+          value={settings.interactiveSegHotkey}
+          disabled={!interactiveSegEnabled}
+          onChange={(key) => updateSettings({ interactiveSegHotkey: key })}
         />
       </div>
     )
