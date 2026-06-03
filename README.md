@@ -58,119 +58,110 @@
 
 ## Quick Start
 
-### Start webui
+### Docker
 
-IOPaint provides a convenient webui for using the latest AI models to edit your images.
-You can install and start IOPaint easily by running following command:
+The fastest way to get started — no Python environment needed.
+
+**Prerequisites:** [Docker Desktop](https://docs.docker.com/get-docker/) (or Docker Engine + Compose plugin). For GPU acceleration, also install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
 
 ```bash
-# In order to use GPU, install cuda version of pytorch first.
-# pip3 install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu118
-# AMD GPU users, please utilize the following command, only works on linux, as pytorch is not yet supported on Windows with ROCm.
+git clone https://github.com/Sanster/IOPaint.git
+cd IOPaint
+docker compose up
+```
+
+Open **http://localhost:8080** in your browser. Models download automatically on first use and are cached in a Docker volume so subsequent starts are instant.
+
+Configure via environment variables:
+
+```bash
+# CPU only (no GPU required)
+DEVICE=cpu docker compose up
+
+# CUDA GPU with a specific model
+DEVICE=cuda MODEL=lama docker compose up
+
+# Enable interactive segmentation with SAM2
+DEVICE=cuda INTERACTIVE_SEG_MODEL=sam2_1_large docker compose up
+```
+
+| Variable | Default | Options |
+|---|---|---|
+| `DEVICE` | `cuda` | `cuda`, `cpu`, `mps` |
+| `MODEL` | `lama` | See [supported models](https://www.iopaint.com/models) |
+| `INTERACTIVE_SEG_MODEL` | `sam2_1_tiny` | `sam2_1_tiny`, `sam2_1_small`, `sam2_1_base`, `sam2_1_large` |
+| `INTERACTIVE_SEG_DEVICE` | `cuda` | `cuda`, `cpu` |
+| `PORT` | `8080` | Any free port |
+
+---
+
+### pip
+
+```bash
+# GPU — install CUDA PyTorch first
+pip3 install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu118
+# AMD GPU (Linux only)
 # pip3 install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/rocm5.6
 
 pip3 install iopaint
 iopaint start --model=lama --device=cpu --port=8080
 ```
 
-That's it, you can start using IOPaint by visiting http://localhost:8080 in your web browser.
-
-All models will be downloaded automatically at startup. If you want to change the download directory, you can add `--model-dir`. More documentation can be found [here](https://www.iopaint.com/install/download_model)
-
-You can see other supported models at [here](https://www.iopaint.com/models) and how to use local sd ckpt/safetensors file at [here](https://www.iopaint.com/models#load-ckptsafetensors).
+Visit http://localhost:8080. Models download automatically. See [model docs](https://www.iopaint.com/install/download_model) for custom download directories and [all supported models](https://www.iopaint.com/models).
 
 ### Plugins
 
-You can specify which plugins to use when starting the service, and you can view the commands to enable plugins by using `iopaint start --help`. 
-
-More demonstrations of the Plugin can be seen [here](https://www.iopaint.com/plugins)
+Enable plugins with flags passed to `iopaint start` (see `iopaint start --help` for all options):
 
 ```bash
 iopaint start --enable-interactive-seg --interactive-seg-device=cuda
 ```
 
-### Batch processing
+More plugin examples at [iopaint.com/plugins](https://www.iopaint.com/plugins).
 
-You can also use IOPaint in the command line to batch process images:
+### Batch processing
 
 ```bash
 iopaint run --model=lama --device=cpu \
---image=/path/to/image_folder \
---mask=/path/to/mask_folder \
---output=output_dir
+  --image=/path/to/image_folder \
+  --mask=/path/to/mask_folder \
+  --output=output_dir
 ```
 
-`--image` is the folder containing input images, `--mask` is the folder containing corresponding mask images.
-When `--mask` is a path to a mask file, all images will be processed using this mask.
+`--image` is the folder of input images, `--mask` is the folder of corresponding masks (or a single mask file applied to all images).
 
-You can see more information about the available models and plugins supported by IOPaint below.
+---
 
 ## Development
 
 ### Docker (recommended)
 
-The easiest way to run a fully hot-reloading dev environment is with Docker Compose Watch.
-Both the Python backend and the React frontend update automatically as you edit files — no
-manual restarts needed.
-
-**Prerequisites**
-
-- [Docker Desktop](https://docs.docker.com/get-docker/) (or Docker Engine + Compose plugin)
-- For GPU support: [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
-
-**Start the stack with file watching**
-
 ```bash
+git clone https://github.com/Sanster/IOPaint.git
+cd IOPaint
 docker compose up --watch
 ```
 
+Both the Python backend and the React frontend update automatically as you edit files.
+
 | What changes | What happens | Latency |
 |---|---|---|
-| `iopaint/**` Python source | Synced into the container instantly; backend restarts | ~5 s |
-| `web_app/src/**` frontend source (port **5173**) | Picked up by Vite's HMR; browser updates without a page reload | < 1 s |
-| `web_app/src/**` frontend source (port **8080**) | Image rebuild triggered; only the fast end layers re-run | ~30–60 s |
-| `requirements.txt` / `setup.py` | Full image rebuild (all layers) | ~10–15 min |
-| `web_app/package.json` / `package-lock.json` | Frontend container restarts and re-runs `npm ci` | ~60 s |
+| `iopaint/**` Python source | Synced into the container; backend restarts | ~5 s |
+| `web_app/src/**` at **http://localhost:5173** | Vite HMR — browser updates without a reload | < 1 s |
+| `web_app/src/**` at **http://localhost:8080** | Image rebuild (fast layers only); container restarts | ~30–60 s |
+| `requirements.txt` / `setup.py` | Full image rebuild | ~10–15 min |
+| `web_app/package.json` / `package-lock.json` | Frontend container restarts, re-runs `npm ci` | ~60 s |
 
-**Access the app**
+| URL | Description |
+|---|---|
+| http://localhost:5173 | Vite dev server — instant HMR, recommended for frontend work |
+| http://localhost:8080 | Built bundle served by the Python backend — good for end-to-end testing |
 
-| Service | URL | Notes |
-|---|---|---|
-| Frontend (Vite HMR dev server) | http://localhost:5173 | Instant HMR — recommended for active frontend work |
-| Backend (built bundle) | http://localhost:8080 | Auto-rebuilds on save (~30–60 s) — good for QA / testing |
-
-**Configuration via environment variables**
-
-Copy `.env.example` to `.env` (or export variables directly) to override defaults:
-
-```bash
-# GPU device for inpainting model (cuda / cpu / mps)
-DEVICE=cuda
-
-# Inpainting model to load on startup
-MODEL=lama
-
-# Interactive segmentation model (sam2_1_tiny / sam2_1_small / sam2_1_base / sam2_1_large)
-INTERACTIVE_SEG_MODEL=sam2_1_tiny
-
-# Device for the interactive seg model
-INTERACTIVE_SEG_DEVICE=cuda
-
-# Port the backend listens on (also used by the Vite proxy)
-PORT=8080
-
-# Port the Vite dev server is exposed on
-FRONTEND_PORT=5173
-```
-
-Model weights are stored in a named Docker volume (`models`) so they are downloaded
-once and reused across restarts.
-
----
+Model weights are stored in a named Docker volume (`models`) and persist across restarts.
 
 ### Local (without Docker)
 
-Install [nodejs](https://nodejs.org/en), then install the frontend dependencies.
+Build and copy the frontend:
 
 ```bash
 git clone https://github.com/Sanster/IOPaint.git
@@ -180,22 +171,23 @@ npm run build
 cp -r dist/ ../iopaint/web_app
 ```
 
-Create a `.env.local` file in `web_app` and fill in the backend IP and port.
+Create `web_app/.env.local` with the backend address:
+
 ```
 VITE_BACKEND=http://127.0.0.1:8080
 ```
 
-Start front-end development environment
+Start the frontend dev server:
+
 ```bash
 npm run dev
 ```
 
-Install back-end requirements and start backend service
+Start the backend:
+
 ```bash
 pip install -r requirements.txt
 python3 main.py start --model lama --port 8080
 ```
 
-Then you can visit `http://localhost:5173/` for development.
-The frontend code will automatically update after being modified,
-but the backend needs to restart the service after modifying the python code.
+Visit http://localhost:5173. Frontend changes hot-reload automatically; Python changes require a backend restart.
