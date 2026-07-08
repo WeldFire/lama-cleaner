@@ -72,6 +72,9 @@ export function Shortcuts() {
               keys={["Ctrl", "Alt", "← →"]}
             />
             <ShortCut content="View Original Image" keys={["Hold Tab"]} />
+            <ShortCut content="Crop Image" keys={["C"]} />
+            <ShortCut content="Confirm Crop" keys={["Enter"]} />
+            <ShortCut content="Cancel Crop" keys={["Esc"]} />
             {interactiveSegHotkey && (
               <ShortCut
                 content="Interactive Segmentation"

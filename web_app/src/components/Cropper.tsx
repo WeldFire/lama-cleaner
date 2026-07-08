@@ -24,6 +24,7 @@ interface Props {
   minHeight: number
   minWidth: number
   show: boolean
+  showForAllModes?: boolean
 }
 
 const clamp = (
@@ -60,7 +61,15 @@ const clamp = (
 }
 
 const Cropper = (props: Props) => {
-  const { minHeight, minWidth, maxHeight, maxWidth, scale, show } = props
+  const {
+    minHeight,
+    minWidth,
+    maxHeight,
+    maxWidth,
+    scale,
+    show,
+    showForAllModes = false,
+  } = props
 
   const [
     imageWidth,
@@ -379,7 +388,7 @@ const Cropper = (props: Props) => {
     )
   }
 
-  if (show === false || !isSD) {
+  if (show === false || (!showForAllModes && !isSD)) {
     return null
   }
 

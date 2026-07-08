@@ -22,7 +22,7 @@ import {
   mouseXY,
   srcToFile,
 } from "@/lib/utils"
-import { Eraser, Eye, Redo, Undo, Expand, Download } from "lucide-react"
+import { Crop, Eraser, Eye, Redo, Undo, Expand, Download } from "lucide-react"
 import { useImage } from "@/hooks/useImage"
 import { Slider } from "./ui/slider"
 import { PluginName } from "@/lib/types"
@@ -72,6 +72,11 @@ export default function Editor(props: EditorProps) {
     isCropperExtenderResizing,
     decreaseBaseBrushSize,
     increaseBaseBrushSize,
+    applyCrop,
+    setCropperX,
+    setCropperY,
+    setCropperWidth,
+    setCropperHeight,
   ] = useStore((state) => [
     state.disableShortCuts,
     state.windowSize,
@@ -99,7 +104,13 @@ export default function Editor(props: EditorProps) {
     state.isCropperExtenderResizing,
     state.decreaseBaseBrushSize,
     state.increaseBaseBrushSize,
+    state.applyCrop,
+    state.setCropperX,
+    state.setCropperY,
+    state.setCropperWidth,
+    state.setCropperHeight,
   ])
+  const cropperState = useStore((state) => state.cropperState)
   const baseBrushSize = useStore((state) => state.editorState.baseBrushSize)
   const brushSize = useStore((state) => state.getBrushSize())
   const renders = useStore((state) => state.editorState.renders)
@@ -117,6 +128,7 @@ export default function Editor(props: EditorProps) {
   const [showBrush, setShowBrush] = useState(false)
   const [showRefBrush, setShowRefBrush] = useState(false)
   const [isPanning, setIsPanning] = useState<boolean>(false)
+  const [isCropMode, setIsCropMode] = useState<boolean>(false)
 
   const [scale, setScale] = useState<number>(1)
   const [panned, setPanned] = useState<boolean>(false)
@@ -433,6 +445,51 @@ export default function Editor(props: EditorProps) {
     minScale,
   ])
 
+  const startCropMode = useCallback(() => {
+    if (
+      isCropMode ||
+      isProcessing ||
+      !isOriginalLoaded ||
+      imageWidth === 0 ||
+      imageHeight === 0
+    ) {
+      return
+    }
+    if (interactiveSegState.isInteractiveSeg) {
+      resetInteractiveSegState()
+      setSegExpansion(0)
+      segExpansionRef.current = 0
+    }
+    setShowBrush(false)
+    setIsDraging(false)
+    setIsPanning(false)
+    setCropperX(0)
+    setCropperY(0)
+    setCropperWidth(imageWidth)
+    setCropperHeight(imageHeight)
+    setIsCropMode(true)
+  }, [
+    imageHeight,
+    imageWidth,
+    interactiveSegState.isInteractiveSeg,
+    isCropMode,
+    isOriginalLoaded,
+    isProcessing,
+    resetInteractiveSegState,
+    setCropperHeight,
+    setCropperWidth,
+    setCropperX,
+    setCropperY,
+  ])
+
+  const confirmCrop = useCallback(async () => {
+    if (!isCropMode) {
+      return
+    }
+    await applyCrop(cropperState)
+    setIsCropMode(false)
+  }, [applyCrop, cropperState, isCropMode])
+
   useEffect(() => {
     window.addEventListener("resize", () => {
       resetZoom()
@@ -446,6 +503,10 @@ export default function Editor(props: EditorProps) {
 
   const handleEscPressed = () => {
     if (isProcessing) {
+      return
+    }
+    if (isCropMode) {
+      setIsCropMode(false)
       return
     }
     // Interactive seg cancel takes priority over zoom reset
@@ -464,6 +525,7 @@ export default function Editor(props: EditorProps) {
 
   useHotKey("Escape", handleEscPressed, [
     isDraging,
+    isCropMode,
     isInpainting,
     resetZoom,
     interactiveSegState.isInteractiveSeg,
@@ -473,7 +535,11 @@ export default function Editor(props: EditorProps) {
   // Enter key accepts the current interactive seg mask (if one exists)
   useHotKey(
     "enter",
-    () => {
+    async () => {
+      if (isCropMode) {
+        await confirmCrop()
+        return
+      }
       if (
         interactiveSegState.isInteractiveSeg &&
         interactiveSegState.tmpInteractiveSegMask
@@ -484,12 +550,28 @@ export default function Editor(props: EditorProps) {
     [
       interactiveSegState.isInteractiveSeg,
       interactiveSegState.tmpInteractiveSegMask,
+      isCropMode,
+      confirmCrop,
       handleInteractiveSegAccept,
     ]
   )
 
+  useHotKey(
+    "c",
+    (ev: KeyboardEvent) => {
+      ev.preventDefault()
+      startCropMode()
+    },
+    [startCropMode]
+  )
+
   const onMouseMove = (ev: SyntheticEvent) => {
     const mouseEvent = ev.nativeEvent as MouseEvent
+
+    if (isCropMode) {
+      setCoords({ x: mouseEvent.pageX, y: mouseEvent.pageY })
+      return
+    }
 
     if (isResizingBrush) {
       if (mouseEvent.movementX !== 0) {
@@ -520,6 +602,10 @@ export default function Editor(props: EditorProps) {
 
   const onMouseDrag = (ev: SyntheticEvent) => {
     if (isProcessing) {
+      return
+    }
+
+    if (isCropMode) {
       return
     }
 
@@ -571,6 +657,9 @@ export default function Editor(props: EditorProps) {
   }
 
   const onPointerUp = (ev: SyntheticEvent) => {
+    if (isCropMode) {
+      return
+    }
     if (isMidClick(ev)) {
       setIsPanning(false)
       return
@@ -606,6 +695,9 @@ export default function Editor(props: EditorProps) {
   }
 
   const onCanvasMouseUp = (ev: SyntheticEvent) => {
+    if (isCropMode) {
+      return
+    }
     if (interactiveSegState.isInteractiveSeg) {
       const xy = mouseXY(ev)
       const newClicks: number[][] = [...interactiveSegState.clicks]
@@ -621,6 +713,9 @@ export default function Editor(props: EditorProps) {
 
   const onMouseDown = (ev: SyntheticEvent) => {
     if (isProcessing) {
+      return
+    }
+    if (isCropMode) {
       return
     }
     if (interactiveSegState.isInteractiveSeg) {
@@ -793,6 +888,9 @@ export default function Editor(props: EditorProps) {
     if (isProcessing) {
       return "default"
     }
+    if (isCropMode) {
+      return "default"
+    }
     if (isPanning) {
       return "grab"
     }
@@ -801,7 +899,7 @@ export default function Editor(props: EditorProps) {
       return "none"
     }
     return undefined
-  }, [showBrush, isPanning, isProcessing, isResizingBrush])
+  }, [showBrush, isPanning, isProcessing, isResizingBrush, isCropMode])
 
   useHotKey(
     "[",
@@ -850,7 +948,7 @@ export default function Editor(props: EditorProps) {
   useKeyPressEvent(
     " ",
     (ev) => {
-      if (!disableShortCuts) {
+      if (!disableShortCuts && !isCropMode) {
         ev?.preventDefault()
         ev?.stopPropagation()
         setShowBrush(false)
@@ -858,7 +956,7 @@ export default function Editor(props: EditorProps) {
       }
     },
     (ev) => {
-      if (!disableShortCuts) {
+      if (!disableShortCuts && !isCropMode) {
         ev?.preventDefault()
         ev?.stopPropagation()
         setShowBrush(true)
@@ -875,6 +973,7 @@ export default function Editor(props: EditorProps) {
   useEffect(() => {
     const handleKeyDown = (ev: KeyboardEvent) => {
       if (disableShortCuts) return
+      if (isCropMode) return
       if (ev.ctrlKey && ev.altKey) {
         ev.preventDefault()
         setIsResizingBrush(true)
@@ -914,7 +1013,7 @@ export default function Editor(props: EditorProps) {
       window.removeEventListener("keyup", handleKeyUp)
       window.removeEventListener("blur", handleBlur)
     }
-  }, [disableShortCuts, commitSegExpansion])
+  }, [disableShortCuts, commitSegExpansion, isCropMode])
 
   // Suppress the browser context menu globally while interactive seg is active
   // so right-clicking to add a negative point doesn't also open the menu.
@@ -1119,10 +1218,15 @@ export default function Editor(props: EditorProps) {
           <Cropper
             maxHeight={imageHeight}
             maxWidth={imageWidth}
-            minHeight={Math.min(512, imageHeight)}
-            minWidth={Math.min(512, imageWidth)}
+            minHeight={
+              isCropMode ? Math.min(16, imageHeight) : Math.min(512, imageHeight)
+            }
+            minWidth={
+              isCropMode ? Math.min(16, imageWidth) : Math.min(512, imageWidth)
+            }
             scale={getCurScale()}
-            show={settings.showCropper}
+            show={isCropMode || settings.showCropper}
+            showForAllModes={isCropMode}
           />
 
           <Extender
@@ -1151,6 +1255,7 @@ export default function Editor(props: EditorProps) {
     >
       {renderCanvas()}
       {(showBrush || isResizingBrush) &&
+        !isCropMode &&
         !isInpainting &&
         !isPanning &&
         (interactiveSegState.isInteractiveSeg
@@ -1178,6 +1283,19 @@ export default function Editor(props: EditorProps) {
             onClick={resetZoom}
           >
             <Expand />
+          </IconButton>
+          <IconButton
+            tooltip={isCropMode ? "Confirm Crop" : "Crop Image"}
+            disabled={isProcessing || imageWidth === 0 || imageHeight === 0}
+            onClick={() => {
+              if (isCropMode) {
+                confirmCrop()
+              } else {
+                startCropMode()
+              }
+            }}
+          >
+            <Crop />
           </IconButton>
           <IconButton
             tooltip="Undo"

@@ -14,6 +14,7 @@ import {
   PluginParams,
   Point,
   PowerPaintTask,
+  Rect,
   ServerConfig,
   Size,
   SortBy,
@@ -31,6 +32,7 @@ import {
   blobToImage,
   canvasToImage,
   dataURItoBlob,
+  fileToImage,
   generateMask,
   loadImage,
   srcToFile,
@@ -52,6 +54,21 @@ type CropperState = {
   y: number
   width: number
   height: number
+}
+
+type EditorSnapshot = {
+  imageWidth: number
+  imageHeight: number
+  editorState: Pick<
+    EditorState,
+    | "renders"
+    | "lineGroups"
+    | "lastLineGroup"
+    | "curLineGroup"
+    | "extraMasks"
+    | "prevExtraMasks"
+    | "temporaryMasks"
+  >
 }
 
 export type Settings = {
@@ -142,6 +159,11 @@ type EditorState = {
   redoRenders: HTMLImageElement[]
   redoCurLines: Line[]
   redoLineGroups: LineGroup[]
+
+  historyActions: Array<"render" | "crop">
+  redoHistoryActions: Array<"render" | "crop">
+  undoCropSnapshots: EditorSnapshot[]
+  redoCropSnapshots: EditorSnapshot[]
 }
 
 type AppState = {
@@ -237,9 +259,73 @@ type AppAction = {
   redo: () => void
   undoDisabled: () => boolean
   redoDisabled: () => boolean
+  applyCrop: (rect: Rect) => Promise<void>
 
   adjustMask: (operate: AdjustMaskOperate) => Promise<void>
   clearMask: () => void
+}
+
+const cropImage = async (
+  image: HTMLImageElement,
+  rect: Rect
+): Promise<HTMLImageElement> => {
+  const canvas = document.createElement("canvas")
+  canvas.width = rect.width
+  canvas.height = rect.height
+  const ctx = canvas.getContext("2d")
+  if (!ctx) {
+    throw new Error("could not retrieve crop canvas")
+  }
+  ctx.drawImage(
+    image,
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    0,
+    0,
+    rect.width,
+    rect.height
+  )
+  return canvasToImage(canvas)
+}
+
+const cropImages = async (
+  images: HTMLImageElement[],
+  rect: Rect
+): Promise<HTMLImageElement[]> => {
+  return Promise.all(images.map((image) => cropImage(image, rect)))
+}
+
+const cropLineGroup = (lineGroup: LineGroup, rect: Rect): LineGroup => {
+  return lineGroup.map((line) => ({
+    ...line,
+    pts: line.pts.map((pt) => ({
+      x: pt.x - rect.x,
+      y: pt.y - rect.y,
+    })),
+  }))
+}
+
+const cropLineGroups = (lineGroups: LineGroup[], rect: Rect): LineGroup[] => {
+  return lineGroups.map((lineGroup) => cropLineGroup(lineGroup, rect))
+}
+
+const createEditorSnapshot = (state: unknown): EditorSnapshot => {
+  const appState = state as AppState
+  return {
+    imageWidth: appState.imageWidth,
+    imageHeight: appState.imageHeight,
+    editorState: {
+      renders: appState.editorState.renders,
+      lineGroups: appState.editorState.lineGroups,
+      lastLineGroup: appState.editorState.lastLineGroup,
+      curLineGroup: appState.editorState.curLineGroup,
+      extraMasks: appState.editorState.extraMasks,
+      prevExtraMasks: appState.editorState.prevExtraMasks,
+      temporaryMasks: appState.editorState.temporaryMasks,
+    },
+  }
 }
 
 const defaultValues: AppState = {
@@ -270,6 +356,10 @@ const defaultValues: AppState = {
     redoRenders: [],
     redoCurLines: [],
     redoLineGroups: [],
+    historyActions: [],
+    redoHistoryActions: [],
+    undoCropSnapshots: [],
+    redoCropSnapshots: [],
   },
 
   interactiveSegState: {
@@ -368,7 +458,7 @@ const defaultValues: AppState = {
     powerpaintTask: PowerPaintTask.text_guided,
     adjustMaskKernelSize: 12,
     interactiveSegMaskPadding: 0,
-    interactiveSegHotkey: "",
+    interactiveSegHotkey: "a",
   },
 }
 
@@ -556,6 +646,7 @@ export const useStore = createWithEqualityFn<AppState & AppAction>()(
             curLineGroup: [],
             extraMasks: [],
             prevExtraMasks: maskImages,
+            historyActions: [...get().editorState.historyActions, "render"],
           })
         } catch (e: any) {
           toast({
@@ -601,6 +692,7 @@ export const useStore = createWithEqualityFn<AppState & AppAction>()(
             get().updateEditorState({
               renders: newRenders,
               lineGroups: newLineGroups,
+              historyActions: [...get().editorState.historyActions, "render"],
             })
           } else {
             const newMask = new Image()
@@ -679,6 +771,9 @@ export const useStore = createWithEqualityFn<AppState & AppAction>()(
 
       undoDisabled: (): boolean => {
         const editorState = get().editorState
+        if (editorState.undoCropSnapshots.length > 0) {
+          return false
+        }
         if (editorState.renders.length > 0) {
           return false
         }
@@ -693,6 +788,37 @@ export const useStore = createWithEqualityFn<AppState & AppAction>()(
       },
 
       undo: () => {
+        const historyAction = get().editorState.historyActions.at(-1)
+        if (historyAction === "crop") {
+          set((state) => {
+            const editorState = state.editorState
+            const snapshot = editorState.undoCropSnapshots.pop()
+            if (!snapshot) {
+              return
+            }
+
+            editorState.redoCropSnapshots.push(
+              castDraft(createEditorSnapshot(state))
+            )
+            state.imageWidth = snapshot.imageWidth
+            state.imageHeight = snapshot.imageHeight
+            editorState.renders = castDraft(snapshot.editorState.renders)
+            editorState.lineGroups = snapshot.editorState.lineGroups
+            editorState.lastLineGroup = snapshot.editorState.lastLineGroup
+            editorState.curLineGroup = snapshot.editorState.curLineGroup
+            editorState.extraMasks = castDraft(snapshot.editorState.extraMasks)
+            editorState.prevExtraMasks = castDraft(
+              snapshot.editorState.prevExtraMasks
+            )
+            editorState.temporaryMasks = castDraft(
+              snapshot.editorState.temporaryMasks
+            )
+            editorState.redoHistoryActions.push(editorState.historyActions.pop()!)
+          })
+          get().resetExtender(get().imageWidth, get().imageHeight)
+          return
+        }
+
         if (
           get().runMannually() &&
           get().editorState.curLineGroup.length !== 0
@@ -723,12 +849,24 @@ export const useStore = createWithEqualityFn<AppState & AppAction>()(
 
             const lastRender = editorState.renders.pop()!
             editorState.redoRenders.push(lastRender)
+            editorState.redoHistoryActions.push(
+              editorState.historyActions.pop() || "render"
+            )
+
+            const currentRender =
+              editorState.renders[editorState.renders.length - 1]
+            state.imageWidth = currentRender?.width || state.imageWidth
+            state.imageHeight = currentRender?.height || state.imageHeight
           })
+          get().resetExtender(get().imageWidth, get().imageHeight)
         }
       },
 
       redoDisabled: (): boolean => {
         const editorState = get().editorState
+        if (editorState.redoCropSnapshots.length > 0) {
+          return false
+        }
         if (editorState.redoRenders.length > 0) {
           return false
         }
@@ -743,6 +881,37 @@ export const useStore = createWithEqualityFn<AppState & AppAction>()(
       },
 
       redo: () => {
+        const redoAction = get().editorState.redoHistoryActions.at(-1)
+        if (redoAction === "crop") {
+          set((state) => {
+            const editorState = state.editorState
+            const snapshot = editorState.redoCropSnapshots.pop()
+            if (!snapshot) {
+              return
+            }
+
+            editorState.undoCropSnapshots.push(
+              castDraft(createEditorSnapshot(state))
+            )
+            state.imageWidth = snapshot.imageWidth
+            state.imageHeight = snapshot.imageHeight
+            editorState.renders = castDraft(snapshot.editorState.renders)
+            editorState.lineGroups = snapshot.editorState.lineGroups
+            editorState.lastLineGroup = snapshot.editorState.lastLineGroup
+            editorState.curLineGroup = snapshot.editorState.curLineGroup
+            editorState.extraMasks = castDraft(snapshot.editorState.extraMasks)
+            editorState.prevExtraMasks = castDraft(
+              snapshot.editorState.prevExtraMasks
+            )
+            editorState.temporaryMasks = castDraft(
+              snapshot.editorState.temporaryMasks
+            )
+            editorState.historyActions.push(editorState.redoHistoryActions.pop()!)
+          })
+          get().resetExtender(get().imageWidth, get().imageHeight)
+          return
+        }
+
         if (
           get().runMannually() &&
           get().editorState.redoCurLines.length !== 0
@@ -770,8 +939,95 @@ export const useStore = createWithEqualityFn<AppState & AppAction>()(
 
             const lastRender = editorState.redoRenders.pop()!
             editorState.renders.push(lastRender)
+            editorState.historyActions.push(
+              editorState.redoHistoryActions.pop() || "render"
+            )
+            state.imageWidth = lastRender.width
+            state.imageHeight = lastRender.height
           })
+          get().resetExtender(get().imageWidth, get().imageHeight)
         }
+      },
+
+      applyCrop: async (rect: Rect): Promise<void> => {
+        const state = get()
+        const { file, imageWidth, imageHeight } = state
+        if (!file) {
+          return
+        }
+
+        const safeRect: Rect = {
+          x: Math.max(0, Math.min(imageWidth - 16, Math.round(rect.x))),
+          y: Math.max(0, Math.min(imageHeight - 16, Math.round(rect.y))),
+          width: Math.max(16, Math.round(rect.width)),
+          height: Math.max(16, Math.round(rect.height)),
+        }
+        safeRect.width = Math.min(safeRect.width, imageWidth - safeRect.x)
+        safeRect.height = Math.min(safeRect.height, imageHeight - safeRect.y)
+
+        if (
+          safeRect.x === 0 &&
+          safeRect.y === 0 &&
+          safeRect.width === imageWidth &&
+          safeRect.height === imageHeight
+        ) {
+          return
+        }
+
+        const editorState = state.editorState
+        const sourceImage =
+          editorState.renders[editorState.renders.length - 1] ||
+          (await fileToImage(file))
+        const [
+          croppedRender,
+          croppedRenders,
+          croppedExtraMasks,
+          croppedPrevExtraMasks,
+          croppedTemporaryMasks,
+        ] = await Promise.all([
+          cropImage(sourceImage, safeRect),
+          cropImages(editorState.renders, safeRect),
+          cropImages(editorState.extraMasks, safeRect),
+          cropImages(editorState.prevExtraMasks, safeRect),
+          cropImages(editorState.temporaryMasks, safeRect),
+        ])
+
+        set((state) => {
+          const snapshot = createEditorSnapshot(state)
+          const editorState = state.editorState
+          editorState.undoCropSnapshots.push(castDraft(snapshot))
+          const nextRenders =
+            croppedRenders.length > 0
+              ? croppedRenders
+              : [castDraft(croppedRender)]
+          const nextLineGroups =
+            croppedRenders.length > 0
+              ? cropLineGroups(editorState.lineGroups, safeRect)
+              : []
+
+          state.imageWidth = safeRect.width
+          state.imageHeight = safeRect.height
+          editorState.renders = castDraft(nextRenders)
+          editorState.lineGroups = nextLineGroups
+          editorState.lastLineGroup = cropLineGroup(
+            editorState.lastLineGroup,
+            safeRect
+          )
+          editorState.curLineGroup = cropLineGroup(
+            editorState.curLineGroup,
+            safeRect
+          )
+          editorState.extraMasks = castDraft(croppedExtraMasks)
+          editorState.prevExtraMasks = castDraft(croppedPrevExtraMasks)
+          editorState.temporaryMasks = castDraft(croppedTemporaryMasks)
+          editorState.historyActions.push("crop")
+          editorState.redoCurLines = []
+          editorState.redoLineGroups = []
+          editorState.redoRenders = []
+          editorState.redoHistoryActions = []
+          editorState.redoCropSnapshots = []
+        })
+        get().resetExtender(safeRect.width, safeRect.height)
       },
 
       resetRedoState: () => {
@@ -779,6 +1035,8 @@ export const useStore = createWithEqualityFn<AppState & AppAction>()(
           state.editorState.redoCurLines = []
           state.editorState.redoLineGroups = []
           state.editorState.redoRenders = []
+          state.editorState.redoHistoryActions = []
+          state.editorState.redoCropSnapshots = []
         })
       },
 
@@ -1157,13 +1415,16 @@ export const useStore = createWithEqualityFn<AppState & AppAction>()(
     })),
     {
       name: "ZUSTAND_STATE", // name of the item in the storage (must be unique)
-      version: 3,
+      version: 4,
       // Migrate persisted state across version bumps so existing users keep
       // their settings while new fields get their defaults injected.
       migrate: (persistedState: any, version: number) => {
         if (version < 3 && persistedState?.settings) {
           persistedState.settings.interactiveSegMaskPadding = 0
           persistedState.settings.interactiveSegHotkey = ""
+        }
+        if (version < 4 && persistedState?.settings) {
+          persistedState.settings.interactiveSegHotkey ||= "a"
         }
         return persistedState
       },
