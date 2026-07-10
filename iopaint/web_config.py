@@ -32,7 +32,7 @@ _config_file: Path = None
 
 default_configs = dict(
     host="127.0.0.1",
-    port=8080,
+    port=8088,
     inbrowser=True,
     model=DEFAULT_MODEL,
     model_dir=DEFAULT_MODEL_DIR,

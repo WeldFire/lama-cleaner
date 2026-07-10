@@ -70,7 +70,7 @@ cd IOPaint
 docker compose up
 ```
 
-Open **http://localhost:8080** in your browser. Models download automatically on first use and are cached in a Docker volume so subsequent starts are instant.
+Open **http://localhost:8088** in your browser. Models download automatically on first use and are cached in a Docker volume so subsequent starts are instant.
 
 Configure via environment variables:
 
@@ -91,7 +91,7 @@ DEVICE=cuda INTERACTIVE_SEG_MODEL=sam2_1_large docker compose up
 | `MODEL` | `lama` | See [supported models](https://www.iopaint.com/models) |
 | `INTERACTIVE_SEG_MODEL` | `sam2_1_tiny` | `sam2_1_tiny`, `sam2_1_small`, `sam2_1_base`, `sam2_1_large` |
 | `INTERACTIVE_SEG_DEVICE` | `cuda` | `cuda`, `cpu` |
-| `PORT` | `8080` | Any free port |
+| `PORT` | `8088` | Any free port |
 
 ---
 
@@ -104,10 +104,10 @@ pip3 install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytor
 # pip3 install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/rocm5.6
 
 pip3 install iopaint
-iopaint start --model=lama --device=cpu --port=8080
+iopaint start --model=lama --device=cpu --port=8088
 ```
 
-Visit http://localhost:8080. Models download automatically. See [model docs](https://www.iopaint.com/install/download_model) for custom download directories and [all supported models](https://www.iopaint.com/models).
+Visit http://localhost:8088. Models download automatically. See [model docs](https://www.iopaint.com/install/download_model) for custom download directories and [all supported models](https://www.iopaint.com/models).
 
 ### Plugins
 
@@ -148,14 +148,14 @@ Both the Python backend and the React frontend update automatically as you edit 
 |---|---|---|
 | `iopaint/**` Python source | Synced into the container; backend restarts | ~5 s |
 | `web_app/src/**` at **http://localhost:5173** | Vite HMR — browser updates without a reload | < 1 s |
-| `web_app/src/**` at **http://localhost:8080** | Image rebuild (fast layers only); container restarts | ~30–60 s |
+| `web_app/src/**` at **http://localhost:8088** | Image rebuild (fast layers only); container restarts | ~30–60 s |
 | `requirements.txt` / `setup.py` | Full image rebuild | ~10–15 min |
 | `web_app/package.json` / `package-lock.json` | Frontend container restarts, re-runs `npm ci` | ~60 s |
 
 | URL | Description |
 |---|---|
 | http://localhost:5173 | Vite dev server — instant HMR, recommended for frontend work |
-| http://localhost:8080 | Built bundle served by the Python backend — good for end-to-end testing |
+| http://localhost:8088 | Built bundle served by the Python backend — good for end-to-end testing |
 
 Model weights are stored in a named Docker volume (`models`) and persist across restarts.
 
@@ -174,7 +174,7 @@ cp -r dist/ ../iopaint/web_app
 Create `web_app/.env.local` with the backend address:
 
 ```
-VITE_BACKEND=http://127.0.0.1:8080
+VITE_BACKEND=http://127.0.0.1:8088
 ```
 
 Start the frontend dev server:
@@ -187,7 +187,7 @@ Start the backend:
 
 ```bash
 pip install -r requirements.txt
-python3 main.py start --model lama --port 8080
+python3 main.py start --model lama --port 8088
 ```
 
 Visit http://localhost:5173. Frontend changes hot-reload automatically; Python changes require a backend restart.

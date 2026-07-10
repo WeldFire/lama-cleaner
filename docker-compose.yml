@@ -7,13 +7,13 @@ services:
       dockerfile: docker/DevDockerfile
 
     ports:
-      - "${PORT:-8080}:8080"
+      - "${PORT:-8088}:8088"
 
     environment:
       - DEVICE=${DEVICE:-cuda}
       - MODEL=${MODEL:-lama}
       - MODEL_DIR=/models
-      - PORT=${PORT:-8080}
+      - PORT=${PORT:-8088}
       - INTERACTIVE_SEG_MODEL=${INTERACTIVE_SEG_MODEL:-sam2_1_tiny}
       - INTERACTIVE_SEG_DEVICE=${INTERACTIVE_SEG_DEVICE:-cuda}
 
@@ -81,7 +81,7 @@ services:
              npm run dev -- --host 0.0.0.0"
     environment:
       # Vite's dev proxy forwards /api and /socket.io to the Python backend.
-      - API_TARGET=http://app:8080
+      - API_TARGET=http://app:8088
     ports:
       - "${FRONTEND_PORT:-5173}:5173"
     volumes:

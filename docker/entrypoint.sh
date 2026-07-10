@@ -7,13 +7,13 @@ set -e
 echo "Starting IOPaint..."
 echo "  Device           : ${DEVICE:-cuda}"
 echo "  Model            : ${MODEL:-lama}"
-echo "  Port             : ${PORT:-8080}"
+echo "  Port             : ${PORT:-8088}"
 echo "  Model dir        : ${MODEL_DIR:-/models}"
 echo "  Interactive seg  : enabled (${INTERACTIVE_SEG_MODEL:-sam2_1_tiny} on ${INTERACTIVE_SEG_DEVICE:-cuda})"
 
 exec iopaint start \
     --host    0.0.0.0 \
-    --port    "${PORT:-8080}" \
+    --port    "${PORT:-8088}" \
     --device  "${DEVICE:-cuda}" \
     --model   "${MODEL:-lama}" \
     --model-dir "${MODEL_DIR:-/models}" \
