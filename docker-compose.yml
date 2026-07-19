@@ -16,6 +16,9 @@ services:
       - PORT=${PORT:-8088}
       - INTERACTIVE_SEG_MODEL=${INTERACTIVE_SEG_MODEL:-sam2_1_tiny}
       - INTERACTIVE_SEG_DEVICE=${INTERACTIVE_SEG_DEVICE:-cuda}
+      - ENABLE_REMOVE_BG=${ENABLE_REMOVE_BG:-true}
+      - REMOVE_BG_MODEL=${REMOVE_BG_MODEL:-egeorcun/lucida}
+      - REMOVE_BG_DEVICE=${REMOVE_BG_DEVICE:-cuda}
 
     volumes:
       - models:/models
