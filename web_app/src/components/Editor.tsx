@@ -698,6 +698,9 @@ export default function Editor(props: EditorProps) {
     if (isCropMode) {
       return
     }
+    if (isMidClick(ev)) {
+      return
+    }
     if (interactiveSegState.isInteractiveSeg) {
       const xy = mouseXY(ev)
       const newClicks: number[][] = [...interactiveSegState.clicks]
@@ -718,6 +721,10 @@ export default function Editor(props: EditorProps) {
     if (isCropMode) {
       return
     }
+    if (isMidClick(ev)) {
+      setIsPanning(true)
+      return
+    }
     if (interactiveSegState.isInteractiveSeg) {
       return
     }
@@ -733,11 +740,6 @@ export default function Editor(props: EditorProps) {
     }
 
     if (isRightClick(ev)) {
-      return
-    }
-
-    if (isMidClick(ev)) {
-      setIsPanning(true)
       return
     }
 

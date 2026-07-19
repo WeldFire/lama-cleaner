@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from "react"
 
 import useInputImage from "@/hooks/useInputImage"
-import { keepGUIAlive } from "@/lib/utils"
+import { dataURItoBlob, keepGUIAlive } from "@/lib/utils"
 import { getServerConfig } from "@/lib/api"
 import Header from "@/components/Header"
 import Workspace from "@/components/Workspace"
@@ -17,6 +17,64 @@ const SUPPORTED_FILE_TYPE = [
   "image/bmp",
   "image/tiff",
 ]
+
+const IMAGE_DATA_URL_REGEXP =
+  /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\s]+)$/i
+
+function stripPastedStringQuotes(value: string) {
+  let strippedValue = value.trim()
+  const quoteCharacters = ['"', "'", "`"]
+
+  while (strippedValue.length >= 2) {
+    const firstCharacter = strippedValue[0]
+    const lastCharacter = strippedValue[strippedValue.length - 1]
+
+    if (
+      firstCharacter === lastCharacter &&
+      quoteCharacters.includes(firstCharacter)
+    ) {
+      strippedValue = strippedValue.slice(1, -1).trim()
+    } else {
+      break
+    }
+  }
+
+  return strippedValue
+}
+
+function pastedImageDataUrlToFile(pastedText: string) {
+  const dataUrl = stripPastedStringQuotes(pastedText)
+  const match = dataUrl.match(IMAGE_DATA_URL_REGEXP)
+
+  if (!match) {
+    return null
+  }
+
+  const mimeType = match[1].toLowerCase()
+  if (!SUPPORTED_FILE_TYPE.includes(mimeType)) {
+    return null
+  }
+
+  const extension =
+    mimeType.split("/")[1] === "jpeg" ? "jpg" : mimeType.split("/")[1]
+  const normalizedDataUrl = `data:${mimeType};base64,${match[2].replace(
+    /\s/g,
+    ""
+  )}`
+
+  try {
+    return new File(
+      [dataURItoBlob(normalizedDataUrl)],
+      `pasted-image.${extension}`,
+      {
+        type: mimeType,
+      }
+    )
+  } catch {
+    return null
+  }
+}
+
 function Home() {
   const [file, updateAppState, setServerConfig, setFile] = useStore((state) => [
     state.file,
@@ -37,7 +95,7 @@ function Home() {
 
   useEffect(() => {
     updateAppState({ windowSize })
-  }, [windowSize])
+  }, [updateAppState, windowSize])
 
   useEffect(() => {
     const fetchServerConfig = async () => {
@@ -49,33 +107,34 @@ function Home() {
       }
     }
     fetchServerConfig()
-  }, [])
+  }, [setServerConfig])
 
   const dragCounter = useRef(0)
 
-  const handleDrag = useCallback((event: any) => {
+  const handleDrag = useCallback((event: DragEvent) => {
     event.preventDefault()
     event.stopPropagation()
   }, [])
 
-  const handleDragIn = useCallback((event: any) => {
+  const handleDragIn = useCallback((event: DragEvent) => {
     event.preventDefault()
     event.stopPropagation()
     dragCounter.current += 1
   }, [])
 
-  const handleDragOut = useCallback((event: any) => {
+  const handleDragOut = useCallback((event: DragEvent) => {
     event.preventDefault()
     event.stopPropagation()
     dragCounter.current -= 1
     if (dragCounter.current > 0) return
   }, [])
 
-  const handleDrop = useCallback((event: any) => {
+  const handleDrop = useCallback((event: DragEvent) => {
     event.preventDefault()
     event.stopPropagation()
-    if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
-      if (event.dataTransfer.files.length > 1) {
+    const dataTransfer = event.dataTransfer
+    if (dataTransfer?.files && dataTransfer.files.length > 0) {
+      if (dataTransfer.files.length > 1) {
         // setToastState({
         //   open: true,
         //   desc: "Please drag and drop only one file",
@@ -83,7 +142,7 @@ function Home() {
         //   duration: 3000,
         // })
       } else {
-        const dragFile = event.dataTransfer.files[0]
+        const dragFile = dataTransfer.files[0]
         const fileType = dragFile.type
         if (SUPPORTED_FILE_TYPE.includes(fileType)) {
           setFile(dragFile)
@@ -96,16 +155,27 @@ function Home() {
           // })
         }
       }
-      event.dataTransfer.clearData()
+      dataTransfer.clearData()
     }
-  }, [])
+  }, [setFile])
 
-  const onPaste = useCallback((event: any) => {
+  const onPaste = useCallback((event: ClipboardEvent) => {
     // TODO: when sd side panel open, ctrl+v not work
     // https://htmldom.dev/paste-an-image-from-the-clipboard/
     if (!event.clipboardData) {
       return
     }
+
+    const pastedImageDataUrlFile = pastedImageDataUrlToFile(
+      event.clipboardData.getData("text/plain")
+    )
+    if (pastedImageDataUrlFile) {
+      event.preventDefault()
+      event.stopPropagation()
+      setFile(pastedImageDataUrlFile)
+      return
+    }
+
     const clipboardItems = event.clipboardData.items
     const items: DataTransferItem[] = [].slice
       .call(clipboardItems)
@@ -129,7 +199,7 @@ function Home() {
     if (blob) {
       setFile(blob)
     }
-  }, [])
+  }, [setFile])
 
   useEffect(() => {
     window.addEventListener("dragenter", handleDragIn)
@@ -144,7 +214,7 @@ function Home() {
       window.removeEventListener("drop", handleDrop)
       window.removeEventListener("paste", onPaste)
     }
-  })
+  }, [handleDrag, handleDragIn, handleDragOut, handleDrop, onPaste])
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-between w-full bg-[radial-gradient(circle_at_1px_1px,_#8e8e8e8e_1px,_transparent_0)] [background-size:20px_20px] bg-repeat">
