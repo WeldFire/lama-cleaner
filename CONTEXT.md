@@ -21,7 +21,7 @@ One MP4, MOV, or WebM file no larger than 2 GB that contains a decodable video s
 _Avoid_: Upload, source asset
 
 **Video URL Import**:
-A backend-mediated retrieval of a remote video into a Trim Input, subject to URL safety checks and the 2 GB limit.
+A backend-mediated retrieval of a remote video into a Trim Input, subject to URL safety checks and the 2 GB limit. An extensionless URL is accepted only after its downloaded content proves to be a decodable video. A minimal HTML page may supply the video through its first video or source element.
 _Avoid_: Browser fetch, link preview
 
 **Video Canvas**:
@@ -33,7 +33,7 @@ The single Video Canvas control that combines playback seeking with draggable Tr
 _Avoid_: Separate seek bar, dual slider
 
 **Handle Drag Preview**:
-While a Trim Timeline boundary is dragged, the video preview displays that boundary's proposed timestamp. If the playhead would fall outside the changed Trim Range, it is clamped to the same boundary. On release, normal playhead-driven preview resumes.
+While a Trim Timeline boundary is dragged, the video preview displays that boundary's proposed timestamp. If the playhead would fall outside the changed Trim Range, it is clamped to the same boundary. Fast movement uses keyframe-oriented seeking; after 500 ms without movement, the preview refines to the exact boundary. Subsequent small movements alternate fast and exact seeks so the preview does not visibly jump; a move of at least 10% of the video duration returns to fast-only behavior. Release also performs an exact seek before normal playhead-driven preview resumes.
 _Avoid_: Stale preview, out-of-range playhead
 
 **Handle Drag Pause**:

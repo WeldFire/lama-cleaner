@@ -3,12 +3,15 @@ import { useCallback, useEffect, useRef } from "react"
 import useInputImage from "@/hooks/useInputImage"
 import { dataURItoBlob, keepGUIAlive } from "@/lib/utils"
 import { getServerConfig } from "@/lib/api"
+import { isSupportedMediaFile, isVideoFile } from "@/lib/media"
 import Header from "@/components/Header"
 import Workspace from "@/components/Workspace"
+import VideoTrimTimeline from "@/components/VideoTrimTimeline"
 import FileSelect from "@/components/FileSelect"
 import { Toaster } from "./components/ui/toaster"
 import { useStore } from "./lib/states"
 import { useWindowSize } from "react-use"
+import { importVideoUrl } from "@/lib/videoUrlImport"
 
 const SUPPORTED_FILE_TYPE = [
   "image/jpeg",
@@ -16,6 +19,9 @@ const SUPPORTED_FILE_TYPE = [
   "image/webp",
   "image/bmp",
   "image/tiff",
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
 ]
 
 const IMAGE_DATA_URL_REGEXP =
@@ -143,8 +149,7 @@ function Home() {
         // })
       } else {
         const dragFile = dataTransfer.files[0]
-        const fileType = dragFile.type
-        if (SUPPORTED_FILE_TYPE.includes(fileType)) {
+        if (isSupportedMediaFile(dragFile)) {
           setFile(dragFile)
         } else {
           // setToastState({
@@ -159,7 +164,7 @@ function Home() {
     }
   }, [setFile])
 
-  const onPaste = useCallback((event: ClipboardEvent) => {
+  const onPaste = useCallback(async (event: ClipboardEvent) => {
     // TODO: when sd side panel open, ctrl+v not work
     // https://htmldom.dev/paste-an-image-from-the-clipboard/
     if (!event.clipboardData) {
@@ -173,6 +178,18 @@ function Home() {
       event.preventDefault()
       event.stopPropagation()
       setFile(pastedImageDataUrlFile)
+      return
+    }
+
+    const pastedUrl = event.clipboardData.getData("text/plain").trim()
+    if (pastedUrl.startsWith("http://") || pastedUrl.startsWith("https://")) {
+      event.preventDefault()
+      event.stopPropagation()
+      try {
+        setFile(await importVideoUrl(pastedUrl))
+      } catch (error) {
+        alert(error instanceof Error ? error.message : "Unable to import this video URL.")
+      }
       return
     }
 
@@ -220,7 +237,7 @@ function Home() {
     <main className="flex min-h-screen flex-col items-center justify-between w-full bg-[radial-gradient(circle_at_1px_1px,_#8e8e8e8e_1px,_transparent_0)] [background-size:20px_20px] bg-repeat">
       <Toaster />
       <Header />
-      <Workspace />
+      {file && isVideoFile(file) ? <VideoTrimTimeline file={file} /> : <Workspace />}
       {!file ? (
         <FileSelect
           onSelection={async (f) => {

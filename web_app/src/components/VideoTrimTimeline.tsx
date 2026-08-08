@@ -6,6 +6,8 @@ import { trimVideo } from "@/lib/videoApi"
 type Handle = "start" | "end" | null
 
 const MIN_TRIM_DURATION = 0.01
+const PRECISE_SEEK_DELAY_MS = 500
+const LARGE_DRAG_FRACTION = 0.1
 
 export default function VideoTrimTimeline({ file }: { file: File }) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -13,6 +15,11 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
   const dragHandleRef = useRef<Handle>(null)
   const startRef = useRef(0)
   const endRef = useRef(0)
+  const preDragCurrentRef = useRef(0)
+  const lastDraggedBoundaryRef = useRef(0)
+  const precisionModeRef = useRef(false)
+  const exactSeekNextRef = useRef(false)
+  const preciseSeekTimerRef = useRef<number | null>(null)
   const source = useMemo(() => URL.createObjectURL(file), [file])
   const [duration, setDuration] = useState(0)
   const [start, setStart] = useState(0)
@@ -22,7 +29,12 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
   const [playing, setPlaying] = useState(false)
   const [error, setError] = useState("")
 
-  useEffect(() => () => URL.revokeObjectURL(source), [source])
+  useEffect(() => {
+    return () => {
+      if (preciseSeekTimerRef.current !== null) window.clearTimeout(preciseSeekTimerRef.current)
+      URL.revokeObjectURL(source)
+    }
+  }, [source])
 
   const timeAt = (clientX: number) => {
     const box = trackRef.current?.getBoundingClientRect()
@@ -30,9 +42,22 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
     return Math.max(0, Math.min(duration, ((clientX - box.left) / box.width) * duration))
   }
 
-  const seek = (time: number) => {
-    if (videoRef.current) videoRef.current.currentTime = time
+  const seek = (time: number, fast = false) => {
+    if (videoRef.current) {
+      if (fast && videoRef.current.fastSeek) videoRef.current.fastSeek(time)
+      else videoRef.current.currentTime = time
+    }
     setCurrent(time)
+  }
+
+  const schedulePreciseSeek = (time: number) => {
+    if (preciseSeekTimerRef.current !== null) window.clearTimeout(preciseSeekTimerRef.current)
+    preciseSeekTimerRef.current = window.setTimeout(() => {
+      if (!dragHandleRef.current) return
+      precisionModeRef.current = true
+      exactSeekNextRef.current = false
+      seek(time)
+    }, PRECISE_SEEK_DELAY_MS)
   }
 
   const updateDraggedBoundary = (clientX: number) => {
@@ -53,16 +78,29 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
       setEnd(boundary)
     }
 
-    // The moving boundary is the preview while dragging. This also keeps the
-    // playhead inside the Trim Range when a boundary passes its old position.
-    seek(boundary)
+    const movedFar = Math.abs(boundary - lastDraggedBoundaryRef.current) >= duration * LARGE_DRAG_FRACTION
+    if (movedFar) precisionModeRef.current = false
+    lastDraggedBoundaryRef.current = boundary
+
+    // While moving, fast seeking lets the browser show a nearby keyframe.
+    // Once idle, subsequent small moves alternate exact and fast seeks.
+    const seekExactly = precisionModeRef.current && exactSeekNextRef.current
+    exactSeekNextRef.current = !exactSeekNextRef.current
+    seek(boundary, !seekExactly)
+    schedulePreciseSeek(boundary)
   }
 
   const finishHandleDrag = (event?: PointerEvent<HTMLDivElement>) => {
+    if (!dragHandleRef.current) return
+    const restoredCurrent = Math.max(startRef.current, Math.min(endRef.current, preDragCurrentRef.current))
+    dragHandleRef.current = null
     if (event?.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
-    dragHandleRef.current = null
+    if (preciseSeekTimerRef.current !== null) window.clearTimeout(preciseSeekTimerRef.current)
+    precisionModeRef.current = false
+    exactSeekNextRef.current = false
+    seek(restoredCurrent)
     setDragging(null)
   }
 
@@ -76,9 +114,12 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
     // movement cannot escape into the app-wide native drag-and-drop handler.
     track.setPointerCapture(event.pointerId)
     dragHandleRef.current = handle
+    preDragCurrentRef.current = videoRef.current?.currentTime ?? current
+    lastDraggedBoundaryRef.current = handle === "start" ? startRef.current : endRef.current
+    precisionModeRef.current = false
+    exactSeekNextRef.current = false
     setDragging(handle)
     videoRef.current?.pause()
-    updateDraggedBoundary(event.clientX)
   }
 
   const download = async () => {
@@ -113,6 +154,9 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
           setEnd(event.currentTarget.duration)
         }}
         onTimeUpdate={(event) => {
+          // Fast seeking resolves to a nearby keyframe. Keep the timeline on
+          // the requested boundary until an exact seek completes.
+          if (dragHandleRef.current) return
           const time = event.currentTarget.currentTime
           setCurrent(time)
           if (time >= end) {
@@ -138,10 +182,7 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
           onPointerMove={(event) => updateDraggedBoundary(event.clientX)}
           onPointerUp={finishHandleDrag}
           onPointerCancel={finishHandleDrag}
-          onLostPointerCapture={() => {
-            dragHandleRef.current = null
-            setDragging(null)
-          }}
+          onLostPointerCapture={finishHandleDrag}
         >
           <div className="absolute inset-x-0 top-4 h-2 rounded bg-muted" />
           <div

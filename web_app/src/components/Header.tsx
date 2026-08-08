@@ -12,6 +12,7 @@ import { getMediaBlob, getMediaFile } from "@/lib/api"
 import { useStore } from "@/lib/states"
 import SettingsDialog from "./Settings"
 import { cn, fileToImage } from "@/lib/utils"
+import { mediaFileAccept } from "@/lib/media"
 import Coffee from "./Coffee"
 import { useToast } from "./ui/use-toast"
 
@@ -95,7 +96,8 @@ const Header = () => {
 
         <ImageUploadButton
           disabled={isInpainting}
-          tooltip="Upload image"
+          tooltip="Upload media"
+          accept={mediaFileAccept}
           onFileUpload={(file) => {
             setFile(file)
           }}

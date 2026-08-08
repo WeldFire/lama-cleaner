@@ -1190,7 +1190,7 @@ export const useStore = createWithEqualityFn<AppState & AppAction>()(
         }),
 
       setFile: async (file: File) => {
-        if (get().settings.enableAutoExtractPrompt) {
+        if (file.type.startsWith("image/") && get().settings.enableAutoExtractPrompt) {
           try {
             const res = await getGenInfo(file)
             if (res.prompt) {

@@ -78,13 +78,22 @@ services:
     working_dir: /app
     # Install packages then start Vite. npm ci is skipped when node_modules are
     # already present and unchanged (the named volume persists between restarts).
-    command: >
-      sh -c "[ -d node_modules/.bin ] && echo 'node_modules present, skipping npm ci'
-             || npm ci;
-             npm run dev -- --host 0.0.0.0"
+    command:
+      - sh
+      - -ec
+      - |
+        if [ -d node_modules/.bin ]; then
+          echo 'node_modules present, skipping npm ci'
+        else
+          npm ci
+        fi
+        exec npm run dev -- --host 0.0.0.0
     environment:
       # Vite's dev proxy forwards /api and /socket.io to the Python backend.
       - API_TARGET=http://app:8088
+      # Override the host-only value in web_app/.env.local so browser API
+      # requests stay relative and use the proxy above.
+      - VITE_BACKEND=
     ports:
       - "${FRONTEND_PORT:-5173}:5173"
     volumes:
