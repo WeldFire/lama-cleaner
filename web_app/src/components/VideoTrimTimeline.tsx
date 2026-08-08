@@ -8,6 +8,8 @@ type Handle = "start" | "end" | null
 const MIN_TRIM_DURATION = 0.01
 const PRECISE_SEEK_DELAY_MS = 500
 const LARGE_DRAG_FRACTION = 0.1
+const PREVIEW_SEEK_INTERVAL_MS = 100
+const FAST_PREVIEW_STEP_SECONDS = 0.25
 
 export default function VideoTrimTimeline({ file }: { file: File }) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -20,6 +22,10 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
   const precisionModeRef = useRef(false)
   const exactSeekNextRef = useRef(false)
   const preciseSeekTimerRef = useRef<number | null>(null)
+  const previewSeekTimerRef = useRef<number | null>(null)
+  const pendingPreviewTimeRef = useRef(0)
+  const pendingPreviewExactRef = useRef(false)
+  const lastPreviewSeekAtRef = useRef(0)
   const source = useMemo(() => URL.createObjectURL(file), [file])
   const [duration, setDuration] = useState(0)
   const [start, setStart] = useState(0)
@@ -32,6 +38,7 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
   useEffect(() => {
     return () => {
       if (preciseSeekTimerRef.current !== null) window.clearTimeout(preciseSeekTimerRef.current)
+      if (previewSeekTimerRef.current !== null) window.clearTimeout(previewSeekTimerRef.current)
       URL.revokeObjectURL(source)
     }
   }, [source])
@@ -42,12 +49,31 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
     return Math.max(0, Math.min(duration, ((clientX - box.left) / box.width) * duration))
   }
 
-  const seek = (time: number, fast = false) => {
-    if (videoRef.current) {
-      if (fast && videoRef.current.fastSeek) videoRef.current.fastSeek(time)
-      else videoRef.current.currentTime = time
-    }
+  const seek = (time: number) => {
+    if (videoRef.current) videoRef.current.currentTime = time
     setCurrent(time)
+  }
+
+  const schedulePreviewSeek = (time: number, exact: boolean) => {
+    pendingPreviewTimeRef.current = time
+    pendingPreviewExactRef.current = exact
+    if (previewSeekTimerRef.current !== null) return
+
+    const delay = Math.max(0, PREVIEW_SEEK_INTERVAL_MS - (performance.now() - lastPreviewSeekAtRef.current))
+    previewSeekTimerRef.current = window.setTimeout(() => {
+      previewSeekTimerRef.current = null
+      lastPreviewSeekAtRef.current = performance.now()
+      const previewTime = pendingPreviewExactRef.current
+        ? pendingPreviewTimeRef.current
+        : Math.round(pendingPreviewTimeRef.current / FAST_PREVIEW_STEP_SECONDS) * FAST_PREVIEW_STEP_SECONDS
+      seek(previewTime)
+    }, delay)
+  }
+
+  const seekExactly = (time: number) => {
+    if (previewSeekTimerRef.current !== null) window.clearTimeout(previewSeekTimerRef.current)
+    previewSeekTimerRef.current = null
+    seek(time)
   }
 
   const schedulePreciseSeek = (time: number) => {
@@ -56,7 +82,7 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
       if (!dragHandleRef.current) return
       precisionModeRef.current = true
       exactSeekNextRef.current = false
-      seek(time)
+      seekExactly(time)
     }, PRECISE_SEEK_DELAY_MS)
   }
 
@@ -82,11 +108,13 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
     if (movedFar) precisionModeRef.current = false
     lastDraggedBoundaryRef.current = boundary
 
-    // While moving, fast seeking lets the browser show a nearby keyframe.
-    // Once idle, subsequent small moves alternate exact and fast seeks.
+    // This browser does not expose fastSeek. Coalesce pointer movement so the
+    // decoder gets at most ten preview requests a second; precision mode gives
+    // every other coalesced update the exact boundary timestamp.
     const seekExactly = precisionModeRef.current && exactSeekNextRef.current
     exactSeekNextRef.current = !exactSeekNextRef.current
-    seek(boundary, !seekExactly)
+    schedulePreviewSeek(boundary, seekExactly)
+    setCurrent(boundary)
     schedulePreciseSeek(boundary)
   }
 
@@ -98,9 +126,11 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
     if (preciseSeekTimerRef.current !== null) window.clearTimeout(preciseSeekTimerRef.current)
+    if (previewSeekTimerRef.current !== null) window.clearTimeout(previewSeekTimerRef.current)
+    previewSeekTimerRef.current = null
     precisionModeRef.current = false
     exactSeekNextRef.current = false
-    seek(restoredCurrent)
+    seekExactly(restoredCurrent)
     setDragging(null)
   }
 
