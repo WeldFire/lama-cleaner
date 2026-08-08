@@ -33,7 +33,7 @@ The single Video Canvas control that combines playback seeking with draggable Tr
 _Avoid_: Separate seek bar, dual slider
 
 **Handle Drag Preview**:
-While a Trim Timeline boundary is dragged, the video preview displays that boundary's proposed timestamp. If the playhead would fall outside the changed Trim Range, it is clamped to the same boundary. Fast movement uses keyframe-oriented seeking; after 500 ms without movement, the preview refines to the exact boundary. Subsequent small movements alternate fast and exact seeks so the preview does not visibly jump; a move of at least 10% of the video duration returns to fast-only behavior. Release also performs an exact seek before normal playhead-driven preview resumes.
+While a Trim Timeline boundary is dragged, the video preview displays that boundary's proposed timestamp. If the playhead would fall outside the changed Trim Range, it is clamped to the same boundary. Fast movement uses coalesced coarse seeks; after 500 ms without movement, the preview refines to the exact boundary and remains precise. A move of at least 10% of the video duration returns to fast behavior. Release also performs an exact seek before normal playhead-driven preview resumes.
 _Avoid_: Stale preview, out-of-range playhead
 
 **Handle Drag Pause**:

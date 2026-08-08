@@ -20,7 +20,6 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
   const preDragCurrentRef = useRef(0)
   const lastDraggedBoundaryRef = useRef(0)
   const precisionModeRef = useRef(false)
-  const exactSeekNextRef = useRef(false)
   const preciseSeekTimerRef = useRef<number | null>(null)
   const previewSeekTimerRef = useRef<number | null>(null)
   const pendingPreviewTimeRef = useRef(0)
@@ -81,7 +80,6 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
     preciseSeekTimerRef.current = window.setTimeout(() => {
       if (!dragHandleRef.current) return
       precisionModeRef.current = true
-      exactSeekNextRef.current = false
       seekExactly(time)
     }, PRECISE_SEEK_DELAY_MS)
   }
@@ -109,11 +107,9 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
     lastDraggedBoundaryRef.current = boundary
 
     // This browser does not expose fastSeek. Coalesce pointer movement so the
-    // decoder gets at most ten preview requests a second; precision mode gives
-    // every other coalesced update the exact boundary timestamp.
-    const seekExactly = precisionModeRef.current && exactSeekNextRef.current
-    exactSeekNextRef.current = !exactSeekNextRef.current
-    schedulePreviewSeek(boundary, seekExactly)
+    // decoder gets at most ten preview requests a second. Once idle, precision
+    // mode remains exact until the user makes a large jump.
+    schedulePreviewSeek(boundary, precisionModeRef.current)
     setCurrent(boundary)
     schedulePreciseSeek(boundary)
   }
@@ -129,7 +125,6 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
     if (previewSeekTimerRef.current !== null) window.clearTimeout(previewSeekTimerRef.current)
     previewSeekTimerRef.current = null
     precisionModeRef.current = false
-    exactSeekNextRef.current = false
     seekExactly(restoredCurrent)
     setDragging(null)
   }
@@ -147,7 +142,6 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
     preDragCurrentRef.current = videoRef.current?.currentTime ?? current
     lastDraggedBoundaryRef.current = handle === "start" ? startRef.current : endRef.current
     precisionModeRef.current = false
-    exactSeekNextRef.current = false
     setDragging(handle)
     videoRef.current?.pause()
   }
