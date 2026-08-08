@@ -24,6 +24,10 @@ _Avoid_: Upload, source asset
 A backend-mediated retrieval of a remote video into a Trim Input, subject to URL safety checks and the 2 GB limit. An extensionless URL is accepted only after its downloaded content proves to be a decodable video. A minimal HTML page may supply the video through its first video or source element.
 _Avoid_: Browser fetch, link preview
 
+**Video URL Import Pending**:
+A centered Video Canvas overlay displayed from URL paste until the backend returns a validated Trim Input or an error. Its Cancel action aborts the browser request, hides the overlay, and discards any late result.
+_Avoid_: Silent URL paste, toast-only loading state
+
 **Video Canvas**:
 The central editing canvas shown for a Trim Input, replacing image editing tools while preserving the surrounding workspace layout.
 _Avoid_: Video page, trim workspace

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { Loader2 } from "lucide-react"
 
 import useInputImage from "@/hooks/useInputImage"
 import { dataURItoBlob, keepGUIAlive } from "@/lib/utils"
@@ -116,6 +117,16 @@ function Home() {
   }, [setServerConfig])
 
   const dragCounter = useRef(0)
+  const urlImportControllerRef = useRef<AbortController | null>(null)
+  const [isImportingVideoUrl, setIsImportingVideoUrl] = useState(false)
+
+  const cancelVideoUrlImport = useCallback(() => {
+    urlImportControllerRef.current?.abort()
+    urlImportControllerRef.current = null
+    setIsImportingVideoUrl(false)
+  }, [])
+
+  useEffect(() => () => urlImportControllerRef.current?.abort(), [])
 
   const handleDrag = useCallback((event: DragEvent) => {
     event.preventDefault()
@@ -185,10 +196,22 @@ function Home() {
     if (pastedUrl.startsWith("http://") || pastedUrl.startsWith("https://")) {
       event.preventDefault()
       event.stopPropagation()
+      urlImportControllerRef.current?.abort()
+      const controller = new AbortController()
+      urlImportControllerRef.current = controller
+      setIsImportingVideoUrl(true)
       try {
-        setFile(await importVideoUrl(pastedUrl))
+        const importedFile = await importVideoUrl(pastedUrl, controller.signal)
+        if (urlImportControllerRef.current === controller) setFile(importedFile)
       } catch (error) {
-        alert(error instanceof Error ? error.message : "Unable to import this video URL.")
+        if (!controller.signal.aborted) {
+          alert(error instanceof Error ? error.message : "Unable to import this video URL.")
+        }
+      } finally {
+        if (urlImportControllerRef.current === controller) {
+          urlImportControllerRef.current = null
+          setIsImportingVideoUrl(false)
+        }
       }
       return
     }
@@ -246,6 +269,29 @@ function Home() {
         />
       ) : (
         <></>
+      )}
+      {isImportingVideoUrl && (
+        <div
+          aria-label="Importing video URL"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6"
+          role="dialog"
+        >
+          <div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-lg border bg-background p-8 text-center shadow-lg">
+            <Loader2 aria-hidden="true" className="h-8 w-8 animate-spin text-primary" />
+            <div>
+              <h2 className="font-semibold">Importing video</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Fetching and validating the pasted URL…</p>
+            </div>
+            <button
+              className="rounded border border-input px-4 py-2 text-sm font-medium hover:bg-accent"
+              onClick={cancelVideoUrlImport}
+              type="button"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
     </main>
   )
