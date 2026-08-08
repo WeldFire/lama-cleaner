@@ -32,9 +32,17 @@ _Avoid_: Silent URL paste, toast-only loading state
 The central editing canvas shown for a Trim Input, replacing image editing tools while preserving the surrounding workspace layout.
 _Avoid_: Video page, trim workspace
 
+**Frame Edit**:
+An editable still image identified by the exact presentation timestamp of its decoded frame in a Trim Input. It persists when moving between the Video Canvas and image editing, while ordinary video playback continues to show the unchanged Trim Input.
+_Avoid_: Extracted frame, replacement frame, temporary image
+
 **Trim Timeline**:
 The single Video Canvas control that combines playback seeking with draggable Trim Range boundaries.
 _Avoid_: Separate seek bar, dual slider
+
+**Frame Step**:
+A one-frame movement of the Video Canvas playhead, using 30 fps until a user-configurable source frame rate is available.
+_Avoid_: Arbitrary seek nudge, assumed source metadata
 
 **Handle Drag Preview**:
 While a Trim Timeline boundary is dragged, the video preview displays that boundary's proposed timestamp. If the playhead would fall outside the changed Trim Range, it is clamped to the same boundary. Fast movement uses coalesced coarse seeks; after 500 ms without movement, the preview refines to the exact boundary and remains precise. A move of at least 10% of the video duration returns to fast behavior. Release also performs an exact seek before normal playhead-driven preview resumes.

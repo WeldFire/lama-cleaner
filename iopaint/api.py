@@ -46,7 +46,7 @@ from iopaint.model_manager import ModelManager
 from iopaint.plugins import build_plugins, RealESRGANUpscaler, InteractiveSeg
 from iopaint.plugins.base_plugin import BasePlugin
 from iopaint.plugins.remove_bg import RemoveBG
-from iopaint.video_api import api_trim_video
+from iopaint.video_api import api_probe_video, api_trim_video
 from iopaint.video_import import import_video_url
 from iopaint.schema import (
     GenInfoResponse,
@@ -174,6 +174,7 @@ class Api:
         self.add_api_route("/api/v1/adjust_mask", self.api_adjust_mask, methods=["POST"])
         self.add_api_route("/api/v1/save_image", self.api_save_image, methods=["POST"])
         self.add_api_route("/api/v1/video/trim", api_trim_video, methods=["POST"])
+        self.add_api_route("/api/v1/video/probe", api_probe_video, methods=["POST"])
         self.add_api_route("/api/v1/video/import", import_video_url, methods=["POST"])
         self.app.mount("/", StaticFiles(directory=WEB_APP_DIR, html=True), name="assets")
         # fmt: on
