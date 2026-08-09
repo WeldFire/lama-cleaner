@@ -8,6 +8,8 @@ import { isSupportedMediaFile, isVideoFile } from "@/lib/media"
 import Header from "@/components/Header"
 import Workspace from "@/components/Workspace"
 import VideoTrimTimeline from "@/components/VideoTrimTimeline"
+import VideoFrameRoundTripPrototype from "@/components/VideoFrameRoundTripPrototype"
+import TrackingCorrectionPrototype from "@/components/TrackingCorrectionPrototype"
 import FileSelect from "@/components/FileSelect"
 import { Toaster } from "./components/ui/toaster"
 import { useStore } from "./lib/states"
@@ -119,6 +121,14 @@ function Home() {
   const dragCounter = useRef(0)
   const urlImportControllerRef = useRef<AbortController | null>(null)
   const [isImportingVideoUrl, setIsImportingVideoUrl] = useState(false)
+  const showFrameRoundTripPrototype =
+    import.meta.env.DEV &&
+    new URLSearchParams(window.location.search).get("prototype") ===
+      "frame-round-trip"
+  const showTrackingCorrectionPrototype =
+    import.meta.env.DEV &&
+    new URLSearchParams(window.location.search).get("prototype") ===
+      "tracking-correction"
 
   const cancelVideoUrlImport = useCallback(() => {
     urlImportControllerRef.current?.abort()
@@ -260,7 +270,17 @@ function Home() {
     <main className="flex min-h-screen flex-col items-center justify-between w-full bg-[radial-gradient(circle_at_1px_1px,_#8e8e8e8e_1px,_transparent_0)] [background-size:20px_20px] bg-repeat">
       <Toaster />
       <Header />
-      {file && isVideoFile(file) ? <VideoTrimTimeline file={file} /> : <Workspace />}
+      {file && isVideoFile(file) ? (
+        showTrackingCorrectionPrototype ? (
+          <TrackingCorrectionPrototype file={file} />
+        ) : showFrameRoundTripPrototype ? (
+          <VideoFrameRoundTripPrototype file={file} />
+        ) : (
+          <VideoTrimTimeline file={file} />
+        )
+      ) : (
+        <Workspace />
+      )}
       {!file ? (
         <FileSelect
           onSelection={async (f) => {

@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": 1,
+      "url": "https://huggingface.co/facebook/sam2.1-hiera-small",
+      "title": "Meta SAM 2.1 Hiera Small model card",
+      "accessed": "2026-08-08"
+    },
+    {
+      "id": 2,
+      "url": "https://github.com/facebookresearch/sam2",
+      "title": "",
+      "accessed": "2026-08-08"
+    },
+    {
+      "id": 3,
+      "url": "https://github.com/facebookresearch/sam2/blob/main/INSTALL.md",
+      "title": "",
+      "accessed": "2026-08-08"
+    },
+    {
+      "id": 4,
+      "url": "https://github.com/facebookresearch/sam2/blob/main/LICENSE",
+      "title": "",
+      "accessed": "2026-08-08"
+    },
+    {
+      "id": 5,
+      "url": "https://pytorch.org/get-started/locally",
+      "title": "",
+      "accessed": "2026-08-08"
+    },
+    {
+      "id": 6,
+      "url": "https://docs.pytorch.org/docs/stable/notes/mps.html",
+      "title": "",
+      "accessed": "2026-08-08"
+    },
+    {
+      "id": 7,
+      "url": "https://rocm.docs.amd.com/projects/radeon/en/latest/docs/install/native_windows/install-pytorch.html",
+      "title": "",
+      "accessed": "2026-08-08"
+    },
+    {
+      "id": 8,
+      "url": "https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html",
+      "title": "",
+      "accessed": "2026-08-08"
+    },
+    {
+      "id": 9,
+      "url": "https://huggingface.co/facebook/sam2.1-hiera-tiny",
+      "title": "",
+      "accessed": "2026-08-08"
+    }
+  ]
+}

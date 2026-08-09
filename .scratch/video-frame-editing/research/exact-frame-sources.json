@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": 1,
+      "url": "https://ffmpeg.org/ffprobe.html",
+      "title": "ffprobe Documentation",
+      "accessed": "2026-08-08"
+    },
+    {
+      "id": 2,
+      "url": "https://ffmpeg.org/ffmpeg.html",
+      "title": "FFmpeg Documentation",
+      "accessed": "2026-08-08"
+    },
+    {
+      "id": 3,
+      "url": "https://ffmpeg.org/ffmpeg-filters.html",
+      "title": "FFmpeg Filters Documentation",
+      "accessed": "2026-08-08"
+    },
+    {
+      "id": 4,
+      "url": "https://www.ffmpeg.org/doxygen/trunk/structAVFrame.html",
+      "title": "FFmpeg AVFrame Struct Reference",
+      "accessed": "2026-08-08"
+    },
+    {
+      "id": 5,
+      "url": "https://html.spec.whatwg.org/multipage/media.html",
+      "title": "HTML Standard: Media Elements",
+      "accessed": "2026-08-08"
+    },
+    {
+      "id": 6,
+      "url": "https://wicg.github.io/video-rvfc",
+      "title": "HTMLVideoElement.requestVideoFrameCallback",
+      "accessed": "2026-08-08"
+    },
+    {
+      "id": 7,
+      "url": "https://www.w3.org/TR/webcodecs",
+      "title": "WebCodecs",
+      "accessed": "2026-08-08"
+    }
+  ]
+}
