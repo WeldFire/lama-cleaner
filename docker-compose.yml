@@ -13,6 +13,7 @@ services:
       - DEVICE=${DEVICE:-cuda}
       - MODEL=${MODEL:-lama}
       - MODEL_DIR=/models
+      - PROJECT_DATA_DIR=/data/projects
       - PORT=${PORT:-8088}
       - INTERACTIVE_SEG_MODEL=${INTERACTIVE_SEG_MODEL:-sam2_1_tiny}
       - INTERACTIVE_SEG_DEVICE=${INTERACTIVE_SEG_DEVICE:-cuda}
@@ -22,6 +23,7 @@ services:
 
     volumes:
       - models:/models
+      - projects:/data/projects
 
     # NVIDIA GPU passthrough — requires the NVIDIA Container Toolkit on the host.
     # Install guide: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
@@ -119,4 +121,5 @@ services:
 
 volumes:
   models:
+  projects:
   frontend_node_modules:

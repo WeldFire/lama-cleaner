@@ -48,6 +48,7 @@ from iopaint.plugins.base_plugin import BasePlugin
 from iopaint.plugins.remove_bg import RemoveBG
 from iopaint.video_api import api_probe_video, api_trim_video
 from iopaint.video_import import import_video_url
+from iopaint.frame_edit_api import FrameEditApi
 from iopaint.schema import (
     GenInfoResponse,
     ApiConfig,
@@ -158,6 +159,7 @@ class Api:
         self.file_manager = self._build_file_manager()
         self.plugins = self._build_plugins()
         self.model_manager = self._build_model_manager()
+        self.frame_edit_api = FrameEditApi()
 
         # fmt: off
         self.add_api_route("/api/v1/gen-info", self.api_geninfo, methods=["POST"], response_model=GenInfoResponse)
@@ -176,6 +178,7 @@ class Api:
         self.add_api_route("/api/v1/video/trim", api_trim_video, methods=["POST"])
         self.add_api_route("/api/v1/video/probe", api_probe_video, methods=["POST"])
         self.add_api_route("/api/v1/video/import", import_video_url, methods=["POST"])
+        self.app.include_router(self.frame_edit_api.router)
         self.app.mount("/", StaticFiles(directory=WEB_APP_DIR, html=True), name="assets")
         # fmt: on
 
