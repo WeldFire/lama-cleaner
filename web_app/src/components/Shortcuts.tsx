@@ -60,16 +60,16 @@ export function Shortcuts() {
           <Keyboard />
         </IconButton>
       </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
+      <DialogContent className="h-[80vh] max-h-[80vh]">
+        <DialogHeader className="min-h-0 flex-1">
           <DialogTitle>Hotkeys</DialogTitle>
-          <Tabs className="pt-4" defaultValue="general">
+          <Tabs className="flex min-h-0 flex-1 flex-col pt-4" defaultValue="general">
             <TabsList aria-label="Hotkey categories" className="grid w-full grid-cols-3">
               <TabsTrigger value="general">General</TabsTrigger>
               <TabsTrigger value="image">Image editing</TabsTrigger>
               <TabsTrigger value="video">Video editing</TabsTrigger>
             </TabsList>
-            <TabsContent className="max-h-[58vh] space-y-2 overflow-y-auto pr-2" value="general">
+            <TabsContent className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-2" value="general">
               <ShortCut content="Undo" keys={[CmdOrCtrl(), "Z"]} />
               <ShortCut content="Redo" keys={[CmdOrCtrl(), "Shift", "Z"]} />
               <ShortCut content="Paste image or video URL" keys={[CmdOrCtrl(), "V"]} />
@@ -77,12 +77,12 @@ export function Shortcuts() {
               <ShortCut content="Toggle Settings Dialog" keys={["S"]} />
               <ShortCut content="Toggle File Manager" keys={["F"]} />
             </TabsContent>
-            <TabsContent className="max-h-[58vh] space-y-2 overflow-y-auto pr-2" value="video">
+            <TabsContent className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-2" value="video">
               <ShortCut content="Previous exact frame" keys={["←"]} />
               <ShortCut content="Next exact frame" keys={["→"]} />
               <ShortCut content="Play / Pause" keys={["Space"]} />
             </TabsContent>
-            <TabsContent className="max-h-[58vh] space-y-2 overflow-y-auto pr-2" value="image">
+            <TabsContent className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-2" value="image">
               <ShortCut content="Pan" keys={["Space + Drag"]} />
               <ShortCut content="Reset Zoom/Pan" keys={["Esc"]} />
               <ShortCut content="Decrease Brush Size" keys={["["]} />
