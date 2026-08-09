@@ -8,7 +8,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from iopaint.frame_media import FrameMediaError, build_frame_table, extract_canonical_png, source_fingerprint
@@ -23,6 +23,9 @@ class FrameEditApi:
         self.router.add_api_route("", self.create_project, methods=["POST"])
         self.router.add_api_route("", self.list_projects, methods=["GET"])
         self.router.add_api_route("/{project_id}", self.get_project, methods=["GET"])
+        self.router.add_api_route("/{project_id}", self.delete_project, methods=["DELETE"])
+        self.router.add_api_route("/{project_id}/source", self.project_source, methods=["GET"])
+        self.router.add_api_route("/{project_id}/session", self.save_session, methods=["PUT"])
         self.router.add_api_route("/{project_id}/frames", self.list_frames, methods=["GET"])
         self.router.add_api_route("/{project_id}/frames/{ordinal}/image", self.frame_image, methods=["GET"])
         self.router.add_api_route("/{project_id}/frame-edits", self.list_frame_edits, methods=["GET"])
@@ -72,6 +75,53 @@ class FrameEditApi:
 
     def get_project(self, project_id: str):
         return self._snapshot(project_id)
+
+    def delete_project(self, project_id: str):
+        """Logically delete a project so its data remains recoverable."""
+        # Opening first gives callers the same 404 contract as other project
+        # operations instead of silently accepting an unknown identifier.
+        handle = self._open(project_id, "read")
+        self.store.close(handle)
+        return self.store.lifecycle(project_id, "trash")
+
+    def project_source(self, project_id: str):
+        """Stream the immutable project-owned source without requiring re-upload."""
+        handle = self._open(project_id, "read")
+        try:
+            source = self.store.project_snapshot(handle)["source"]
+            if source is None:
+                raise HTTPException(status_code=404, detail="Project source not found")
+            suffix = Path(source["filename"]).suffix.lower()
+            media_types = {".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm"}
+            return FileResponse(
+                self.store.asset_path(handle, source["asset_hash"]),
+                media_type=media_types.get(suffix, "application/octet-stream"),
+                filename=source["filename"],
+            )
+        finally:
+            self.store.close(handle)
+
+    def save_session(self, project_id: str, session: dict = Body(...)):
+        required = ("current_ordinal", "trim_start_ordinal", "trim_end_ordinal")
+        try:
+            state = {key: int(session[key]) for key in required}
+        except (KeyError, TypeError, ValueError) as error:
+            raise HTTPException(status_code=400, detail="Session ordinals must be integers") from error
+        handle = self._open(project_id, "write")
+        try:
+            frame_count = len(self.store.project_snapshot(handle)["frames"])
+            if (
+                frame_count == 0
+                or state["trim_start_ordinal"] < 0
+                or state["trim_start_ordinal"] > state["current_ordinal"]
+                or state["current_ordinal"] > state["trim_end_ordinal"]
+                or state["trim_end_ordinal"] >= frame_count
+            ):
+                raise HTTPException(status_code=400, detail="Session ordinals are outside the project frame range")
+            self.store.transact(handle, ProjectMutation("set_session_state", state))
+            return state
+        finally:
+            self.store.close(handle)
 
     def list_frames(self, project_id: str):
         return self._snapshot(project_id)["frames"]

@@ -62,7 +62,14 @@ export function Shortcuts() {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Hotkeys</DialogTitle>
-          <div className="flex gap-2 flex-col pt-4">
+          <div className="max-h-[70vh] space-y-5 overflow-y-auto pt-4">
+            <section className="space-y-2" aria-labelledby="video-hotkeys">
+              <h3 className="text-sm font-semibold" id="video-hotkeys">Video editing</h3>
+              <ShortCut content="Previous exact frame" keys={["←"]} />
+              <ShortCut content="Next exact frame" keys={["→"]} />
+            </section>
+            <section className="space-y-2" aria-labelledby="image-hotkeys">
+              <h3 className="text-sm font-semibold" id="image-hotkeys">Image editing</h3>
             <ShortCut content="Pan" keys={["Space + Drag"]} />
             <ShortCut content="Reset Zoom/Pan" keys={["Esc"]} />
             <ShortCut content="Decrease Brush Size" keys={["["]} />
@@ -110,6 +117,7 @@ export function Shortcuts() {
             <ShortCut content="Toggle Hotkeys Dialog" keys={["H"]} />
             <ShortCut content="Toggle Settings Dialog" keys={["S"]} />
             <ShortCut content="Toggle File Manager" keys={["F"]} />
+            </section>
           </div>
         </DialogHeader>
       </DialogContent>

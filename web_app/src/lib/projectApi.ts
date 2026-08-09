@@ -6,6 +6,19 @@ export type VideoProject = {
   sourceName: string
   frames: FrameKey[]
   frameEdits: FrameEdit[]
+  sessionState?: ProjectSessionState
+}
+
+export type ProjectSessionState = {
+  currentOrdinal: number
+  trimStartOrdinal: number
+  trimEndOrdinal: number
+}
+
+export type VideoProjectSummary = {
+  id: string
+  name: string
+  updatedAt: string
 }
 
 type JsonObject = Record<string, unknown>
@@ -28,9 +41,12 @@ function normalizeProject(payload: unknown): VideoProject {
     : Array.isArray(data.frameEdits)
       ? data.frameEdits
       : []
+  const source = record(data.source)
+  const rawSession = record(data.session_state ?? data.sessionState)
+  const hasSession = Object.keys(rawSession).length > 0
   return {
     id: stringValue(data.id ?? data.project_id),
-    sourceName: stringValue(data.source_name ?? data.sourceName, "video"),
+    sourceName: stringValue(source.filename ?? data.source_name ?? data.sourceName, "video"),
     frames: rawFrames.map((item, index) => {
       const frame = record(item)
       return {
@@ -52,12 +68,24 @@ function normalizeProject(payload: unknown): VideoProject {
         updatedAt: stringValue(edit.updated_at ?? edit.updatedAt) || undefined,
       }
     }),
+    sessionState: hasSession ? {
+      currentOrdinal: Number(rawSession.current_ordinal ?? rawSession.currentOrdinal ?? 0),
+      trimStartOrdinal: Number(rawSession.trim_start_ordinal ?? rawSession.trimStartOrdinal ?? 0),
+      trimEndOrdinal: Number(rawSession.trim_end_ordinal ?? rawSession.trimEndOrdinal ?? Math.max(0, rawFrames.length - 1)),
+    } : undefined,
   }
 }
 
 async function requireJson(response: Response) {
   if (!response.ok) {
-    const message = await response.text()
+    const body = await response.text()
+    let message = body
+    try {
+      const payload = record(JSON.parse(body))
+      message = stringValue(payload.detail ?? payload.message, body)
+    } catch {
+      // Non-JSON responses already contain the most useful server message.
+    }
     throw new Error(message || `Project request failed (${response.status})`)
   }
   return response.json()
@@ -71,6 +99,38 @@ export async function createVideoProject(file: File): Promise<VideoProject> {
 
 export async function getVideoProject(projectId: string): Promise<VideoProject> {
   return normalizeProject(await requireJson(await fetch(`${API_ENDPOINT}/projects/${projectId}`)))
+}
+
+export async function listVideoProjects(): Promise<VideoProjectSummary[]> {
+  const payload = await requireJson(await fetch(`${API_ENDPOINT}/projects`))
+  return (Array.isArray(payload) ? payload : []).map((item) => {
+    const data = record(item)
+    return {
+      id: stringValue(data.id ?? data.project_id),
+      name: stringValue(data.name, "Untitled video project"),
+      updatedAt: stringValue(data.updated_at ?? data.updatedAt),
+    }
+  })
+}
+
+export async function getProjectSource(projectId: string, sourceName = "video"): Promise<File> {
+  const response = await fetch(`${API_ENDPOINT}/projects/${projectId}/source`)
+  if (!response.ok) throw new Error(await response.text() || "Unable to restore the project source")
+  return new File([await response.blob()], sourceName, {
+    type: response.headers.get("content-type") || "video/mp4",
+  })
+}
+
+export async function saveProjectSession(projectId: string, session: ProjectSessionState) {
+  await requireJson(await fetch(`${API_ENDPOINT}/projects/${projectId}/session`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      current_ordinal: session.currentOrdinal,
+      trim_start_ordinal: session.trimStartOrdinal,
+      trim_end_ordinal: session.trimEndOrdinal,
+    }),
+  }))
 }
 
 export async function getProjectFrame(projectId: string, ordinal: number): Promise<File> {
@@ -103,4 +163,8 @@ export async function saveProjectFrameEdit(
 export async function deleteProjectFrameEdit(projectId: string, editId: string) {
   const response = await fetch(`${API_ENDPOINT}/projects/${projectId}/frame-edits/${editId}`, { method: "DELETE" })
   if (!response.ok) throw new Error(await response.text() || "Unable to delete this frame edit")
+}
+
+export async function deleteVideoProject(projectId: string) {
+  await requireJson(await fetch(`${API_ENDPOINT}/projects/${projectId}`, { method: "DELETE" }))
 }

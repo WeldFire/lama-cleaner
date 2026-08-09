@@ -182,6 +182,16 @@ class ProjectStore:
             )
         elif kind == "delete_frame_edit":
             connection.execute("UPDATE frame_edits SET deleted_at=?,updated_at=? WHERE id=?", (_now(), _now(), payload["id"]))
+        elif kind == "set_session_state":
+            session_state = {
+                "current_ordinal": int(payload["current_ordinal"]),
+                "trim_start_ordinal": int(payload["trim_start_ordinal"]),
+                "trim_end_ordinal": int(payload["trim_end_ordinal"]),
+            }
+            connection.execute(
+                "INSERT OR REPLACE INTO metadata(key,value) VALUES('session_state',?)",
+                (json.dumps(session_state, sort_keys=True),),
+            )
         else:
             raise ValueError(f"Unsupported project mutation: {kind}")
 
@@ -222,10 +232,12 @@ class ProjectStore:
         source = handle.connection.execute("SELECT * FROM sources LIMIT 1").fetchone()
         frames = handle.connection.execute("SELECT ordinal,frame_key_json,png_hash FROM frames ORDER BY ordinal").fetchall()
         edits = handle.connection.execute("SELECT * FROM frame_edits WHERE deleted_at IS NULL ORDER BY ordinal").fetchall()
+        session_row = handle.connection.execute("SELECT value FROM metadata WHERE key='session_state'").fetchone()
         return {
             "project_id": handle.project_id,
             "revision": int(handle.connection.execute("SELECT value FROM metadata WHERE key='revision'").fetchone()[0]),
             "source": None if source is None else {**dict(source), "metadata": json.loads(source["metadata_json"])},
             "frames": [{**json.loads(row["frame_key_json"]), "png_hash": row["png_hash"]} for row in frames],
             "frame_edits": [{**dict(row), "document": json.loads(row["document_json"])} for row in edits],
+            "session_state": None if session_row is None else json.loads(session_row["value"]),
         }

@@ -13,6 +13,26 @@ import { Toaster } from "./components/ui/toaster"
 import { useStore } from "./lib/states"
 import { useWindowSize } from "react-use"
 import { importVideoUrl } from "@/lib/videoUrlImport"
+import {
+  deleteVideoProject,
+  getProjectSource,
+  getVideoProject,
+  listVideoProjects,
+  type VideoProject,
+  type VideoProjectSummary,
+} from "@/lib/projectApi"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+
+const ACTIVE_VIDEO_PROJECT_KEY = "iopaint.activeVideoProjectId"
 
 const SUPPORTED_FILE_TYPE = [
   "image/jpeg",
@@ -121,11 +141,47 @@ function Home() {
   const [isImportingVideoUrl, setIsImportingVideoUrl] = useState(false)
   // Retain the source while `setFile` hydrates the selected PNG into the
   // existing image editor. Project mode, rather than file MIME, owns routing.
-  const [videoProjectSource, setVideoProjectSource] = useState<File | null>(null)
+  const [videoProjectSource, setVideoProjectSource] = useState<{ file: File; projectId?: string } | null>(null)
+  const [recentVideoProjects, setRecentVideoProjects] = useState<VideoProjectSummary[]>([])
+  const [projectRestoreError, setProjectRestoreError] = useState("")
+  const [projectDeleteCandidate, setProjectDeleteCandidate] = useState<VideoProjectSummary | null>(null)
 
   useEffect(() => {
-    if (file && isVideoFile(file)) setVideoProjectSource(file)
+    if (file && isVideoFile(file)) setVideoProjectSource((current) =>
+      current?.file === file ? current : { file }
+    )
   }, [file])
+
+  const refreshRecentProjects = useCallback(() => {
+    listVideoProjects().then(setRecentVideoProjects).catch(() => setRecentVideoProjects([]))
+  }, [])
+
+  const resumeVideoProject = useCallback(async (projectId: string) => {
+    setProjectRestoreError("")
+    try {
+      const project = await getVideoProject(projectId)
+      const restoredSource = await getProjectSource(projectId, project.sourceName)
+      await setFile(restoredSource)
+      setVideoProjectSource({ file: restoredSource, projectId })
+      localStorage.setItem(ACTIVE_VIDEO_PROJECT_KEY, projectId)
+    } catch (reason) {
+      localStorage.removeItem(ACTIVE_VIDEO_PROJECT_KEY)
+      setProjectRestoreError(reason instanceof Error ? reason.message : "Unable to restore video project")
+    }
+  }, [setFile])
+
+  useEffect(() => {
+    refreshRecentProjects()
+    const activeProjectId = localStorage.getItem(ACTIVE_VIDEO_PROJECT_KEY)
+    if (activeProjectId && !videoProjectSource) void resumeVideoProject(activeProjectId)
+    // Restoration is intentionally a one-time startup operation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const handleProjectReady = useCallback((project: VideoProject) => {
+    localStorage.setItem(ACTIVE_VIDEO_PROJECT_KEY, project.id)
+    refreshRecentProjects()
+  }, [refreshRecentProjects])
 
   const cancelVideoUrlImport = useCallback(() => {
     urlImportControllerRef.current?.abort()
@@ -269,10 +325,14 @@ function Home() {
       <Header />
       {videoProjectSource ? (
         <VideoFrameEditWorkspace
-          file={videoProjectSource}
+          file={videoProjectSource.file}
+          projectId={videoProjectSource.projectId}
+          onProjectReady={handleProjectReady}
           onClose={() => {
+            localStorage.removeItem(ACTIVE_VIDEO_PROJECT_KEY)
             setVideoProjectSource(null)
             updateAppState({ file: null })
+            refreshRecentProjects()
           }}
         />
       ) : (
@@ -287,6 +347,44 @@ function Home() {
       ) : (
         <></>
       )}
+      {!videoProjectSource && recentVideoProjects.length > 0 && (
+        <section className="fixed bottom-6 left-1/2 z-20 w-[min(32rem,calc(100%-2rem))] -translate-x-1/2 rounded-lg border bg-background/95 p-4 shadow-lg" aria-label="Recent video projects">
+          <h2 className="text-sm font-semibold">Continue a video project</h2>
+          <div className="mt-2 flex max-h-36 flex-col gap-2 overflow-y-auto">
+            {recentVideoProjects.map((project) => (
+              <div className="flex items-center rounded border" key={project.id}>
+                <button className="flex min-w-0 flex-1 items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => void resumeVideoProject(project.id)} type="button">
+                  <span className="truncate">{project.name}</span>
+                  <span className="ml-3 shrink-0 text-xs text-muted-foreground">Continue</span>
+                </button>
+                <button aria-label={`Delete project ${project.name}`} className="border-l px-3 py-2 text-xs text-destructive hover:bg-accent" onClick={() => setProjectDeleteCandidate(project)} type="button">Delete</button>
+              </div>
+            ))}
+          </div>
+          {projectRestoreError && <p className="mt-2 text-xs text-destructive">{projectRestoreError}</p>}
+        </section>
+      )}
+      <AlertDialog open={Boolean(projectDeleteCandidate)} onOpenChange={(open) => !open && setProjectDeleteCandidate(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this video project?</AlertDialogTitle>
+            <AlertDialogDescription>{projectDeleteCandidate?.name} will be removed from the project selector. Its data remains recoverable in project storage.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={async () => {
+              if (!projectDeleteCandidate) return
+              try {
+                await deleteVideoProject(projectDeleteCandidate.id)
+                setProjectDeleteCandidate(null)
+                refreshRecentProjects()
+              } catch (reason) {
+                setProjectRestoreError(reason instanceof Error ? reason.message : "Unable to delete this project")
+              }
+            }}>Delete project</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {isImportingVideoUrl && (
         <div
           aria-label="Importing video URL"

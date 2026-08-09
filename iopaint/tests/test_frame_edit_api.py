@@ -57,3 +57,26 @@ def test_project_frame_and_frame_edit_endpoints(tmp_path, monkeypatch):
     assert reopened.content == b"edited png"
     assert client.delete(f"/api/v1/projects/{project_id}/frame-edits/{edit_id}").json()["deleted"] is True
     assert client.get(f"/api/v1/projects/{project_id}/frame-edits").json() == []
+
+    source = client.get(f"/api/v1/projects/{project_id}/source")
+    assert source.status_code == 200
+    assert source.content == b"fake video"
+    assert 'filename="clip.mp4"' in source.headers["content-disposition"]
+
+    saved_session = client.put(
+        f"/api/v1/projects/{project_id}/session",
+        json={"current_ordinal": 0, "trim_start_ordinal": 0, "trim_end_ordinal": 0},
+    )
+    assert saved_session.status_code == 200
+    reopened_project = client.get(f"/api/v1/projects/{project_id}").json()
+    assert reopened_project["session_state"] == {
+        "current_ordinal": 0,
+        "trim_start_ordinal": 0,
+        "trim_end_ordinal": 0,
+    }
+
+    deleted_project = client.delete(f"/api/v1/projects/{project_id}")
+    assert deleted_project.status_code == 200
+    assert deleted_project.json() == {"project_id": project_id, "deleted": True}
+    assert all(item["id"] != project_id for item in client.get("/api/v1/projects").json())
+    assert client.delete("/api/v1/projects/missing").status_code == 404

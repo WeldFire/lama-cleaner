@@ -35,6 +35,17 @@ Standing product decisions from the destination interview:
 
 None. The route to the destination is fully specified in [`spec.md`](spec.md).
 
+## Phase 1 QA follow-ups
+
+- [Video hotkeys discoverability](issues/12-video-hotkeys-discoverability.md) — Resolved: grouped video/image shortcuts document exact-frame navigation.
+- [Download a single Frame Edit](issues/13-download-single-frame-edit.md) — Resolved: current rendered frame can be downloaded from image mode.
+- [Restore Trim Range handles](issues/14-restore-trim-range-handles.md) — Resolved: historical time-based drag mechanics and inclusive-Out export restored.
+- [Frame Edit timeline markers](issues/15-frame-edit-timeline-markers.md) — Resolved: saved edits are marked at canonical presentation times.
+- [Guard timeline navigation in image mode](issues/16-guard-timeline-navigation-in-image-mode.md) — Resolved: navigation/exits are guarded and trim mutation is disabled in image mode.
+- [Recoverable Frame Edit deletion](issues/17-recoverable-frame-edit-deletion.md) — Resolved: confirmed edit deletion and recoverable project trash.
+- [Distinguish Trimmed and Edited Video output](issues/18-distinguish-trimmed-and-edited-video-output.md) — Resolved: output is clearly labeled as trimmed original video.
+- [Resume project after page refresh](issues/19-resume-project-after-page-refresh.md) — Resolved: persistent selector and active-project restoration recover session state.
+
 ## Out of scope
 
 - General multi-clip editing, transitions, titles, color grading, or a multi-track nonlinear timeline.

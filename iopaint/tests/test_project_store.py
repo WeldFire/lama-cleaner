@@ -57,3 +57,23 @@ def test_frame_edit_is_logically_deleted_and_assets_remain(tmp_path):
     assert store.project_snapshot(handle)["frame_edits"] == []
     assert render_path.read_bytes() == b"render"
     store.close(handle)
+
+
+def test_session_state_is_persisted_with_project(tmp_path):
+    store = ProjectStore(tmp_path)
+    handle = store.open()
+    store.transact(handle, ProjectMutation("set_session_state", {
+        "current_ordinal": 7,
+        "trim_start_ordinal": 2,
+        "trim_end_ordinal": 11,
+    }))
+    project_id = handle.project_id
+    store.close(handle)
+
+    reopened = store.open(project_id, "read")
+    assert store.project_snapshot(reopened)["session_state"] == {
+        "current_ordinal": 7,
+        "trim_start_ordinal": 2,
+        "trim_end_ordinal": 11,
+    }
+    store.close(reopened)
