@@ -63,16 +63,24 @@ export function Shortcuts() {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Hotkeys</DialogTitle>
-          <Tabs className="pt-4" defaultValue="image">
-            <TabsList aria-label="Hotkey categories" className="grid w-full grid-cols-2">
+          <Tabs className="pt-4" defaultValue="general">
+            <TabsList aria-label="Hotkey categories" className="grid w-full grid-cols-3">
+              <TabsTrigger value="general">General</TabsTrigger>
               <TabsTrigger value="image">Image editing</TabsTrigger>
               <TabsTrigger value="video">Video editing</TabsTrigger>
             </TabsList>
+            <TabsContent className="max-h-[58vh] space-y-2 overflow-y-auto pr-2" value="general">
+              <ShortCut content="Undo" keys={[CmdOrCtrl(), "Z"]} />
+              <ShortCut content="Redo" keys={[CmdOrCtrl(), "Shift", "Z"]} />
+              <ShortCut content="Paste image or video URL" keys={[CmdOrCtrl(), "V"]} />
+              <ShortCut content="Toggle Hotkeys Dialog" keys={["H"]} />
+              <ShortCut content="Toggle Settings Dialog" keys={["S"]} />
+              <ShortCut content="Toggle File Manager" keys={["F"]} />
+            </TabsContent>
             <TabsContent className="max-h-[58vh] space-y-2 overflow-y-auto pr-2" value="video">
               <ShortCut content="Previous exact frame" keys={["←"]} />
               <ShortCut content="Next exact frame" keys={["→"]} />
               <ShortCut content="Play / Pause" keys={["Space"]} />
-              <ShortCut content="Toggle Hotkeys Dialog" keys={["H"]} />
             </TabsContent>
             <TabsContent className="max-h-[58vh] space-y-2 overflow-y-auto pr-2" value="image">
               <ShortCut content="Pan" keys={["Space + Drag"]} />
@@ -107,15 +115,8 @@ export function Shortcuts() {
               <ShortCut content="Accept Seg Mask" keys={["Enter"]} />
               <ShortCut content="Cancel Seg / Undo Point" keys={["Esc", "Ctrl+Z"]} />
               <ShortCut content="Expand / Shrink Seg Mask" keys={["Ctrl", "Alt", "← →"]} />
-
-              <ShortCut content="Undo" keys={[CmdOrCtrl(), "Z"]} />
-              <ShortCut content="Redo" keys={[CmdOrCtrl(), "Shift", "Z"]} />
               <ShortCut content="Copy Result" keys={[CmdOrCtrl(), "C"]} />
-              <ShortCut content="Paste Image" keys={[CmdOrCtrl(), "V"]} />
               <ShortCut content="Trigger Manually Inpainting" keys={["Shift", "R"]} />
-              <ShortCut content="Toggle Hotkeys Dialog" keys={["H"]} />
-              <ShortCut content="Toggle Settings Dialog" keys={["S"]} />
-              <ShortCut content="Toggle File Manager" keys={["F"]} />
             </TabsContent>
           </Tabs>
         </DialogHeader>
