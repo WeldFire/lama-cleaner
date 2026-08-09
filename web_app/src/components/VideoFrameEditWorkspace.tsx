@@ -544,7 +544,7 @@ export default function VideoFrameEditWorkspace({
           )}
         </div>
         <div className="mt-2 flex items-center gap-2">
-          <label className="text-xs text-muted-foreground">In <input className="w-20 rounded border bg-background px-2 py-1 disabled:opacity-50" disabled={session.mode === "image"} max={Math.max(0, session.trimEndOrdinal - (lastOrdinal > 0 ? 1 : 0))} min={0} onChange={(event) => dispatch({ type: "SET_TRIM", start: Math.max(0, Math.min(Number(event.target.value), session.trimEndOrdinal - (lastOrdinal > 0 ? 1 : 0))), end: session.trimEndOrdinal })} type="number" value={session.trimStartOrdinal} /></label>
+          <label className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">Trim start <input aria-label="Trim start timecode" className="w-28 rounded border bg-background px-2 py-1 font-mono disabled:opacity-50" disabled={session.mode === "image"} onBlur={(event) => applyTimecode("start", event.currentTarget.value)} onChange={(event) => setStartTimecode(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur() }} value={startTimecode} /></label>
           <div
             aria-label="Exact frame timeline"
             className="relative mx-2 h-10 min-w-24 flex-1 cursor-pointer touch-none select-none"
@@ -564,7 +564,7 @@ export default function VideoFrameEditWorkspace({
             aria-valuenow={session.currentOrdinal}
           >
             <div className="absolute inset-x-0 top-3 h-2 rounded bg-muted" />
-            <div className="absolute top-3 h-2 bg-primary/35" style={{ left: `${percentFor(session.trimStartOrdinal)}%`, right: `${100 - outPercent}%` }} />
+            <div className="absolute top-3 h-2 bg-primary" style={{ left: `${percentFor(session.trimStartOrdinal)}%`, right: `${100 - outPercent}%` }} />
             {project.frameEdits.map((edit) => (
               <button
                 aria-label={`Open saved edit for frame ${edit.frameOrdinal + 1}`}
@@ -590,17 +590,8 @@ export default function VideoFrameEditWorkspace({
               />
             })}
           </div>
-          <label className="text-xs text-muted-foreground">Out <input className="w-20 rounded border bg-background px-2 py-1 disabled:opacity-50" disabled={session.mode === "image"} max={project.frames.length - 1} min={Math.min(lastOrdinal, session.trimStartOrdinal + (lastOrdinal > 0 ? 1 : 0))} onChange={(event) => dispatch({ type: "SET_TRIM", start: session.trimStartOrdinal, end: Math.min(lastOrdinal, Math.max(Number(event.target.value), session.trimStartOrdinal + (lastOrdinal > 0 ? 1 : 0))) })} type="number" value={session.trimEndOrdinal} /></label>
-          <span className="hidden text-xs text-muted-foreground lg:inline">Trim {trimStartSeconds.toFixed(3)}–{trimEndSeconds.toFixed(3)}s</span>
-          <button aria-label="Trim original video" className="flex shrink-0 items-center gap-1 rounded border px-2 py-1.5 text-xs disabled:opacity-50" disabled={busy || !duration} onClick={downloadTrim} title="Downloads the trimmed original video. Saved frame edits are not composited into this Phase 1 output." type="button"><Download className="h-4 w-4" />Trim original video</button>
-        </div>
-        <div className="mt-2 grid grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1 text-xs text-muted-foreground">Trim start
-            <input aria-label="Trim start timecode" className="h-8 rounded border bg-background px-2 font-mono text-sm disabled:opacity-50" disabled={session.mode === "image"} onBlur={(event) => applyTimecode("start", event.currentTarget.value)} onChange={(event) => setStartTimecode(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur() }} value={startTimecode} />
-          </label>
-          <label className="flex flex-col gap-1 text-xs text-muted-foreground">Trim end
-            <input aria-label="Trim end timecode" className="h-8 rounded border bg-background px-2 font-mono text-sm disabled:opacity-50" disabled={session.mode === "image"} onBlur={(event) => applyTimecode("end", event.currentTarget.value)} onChange={(event) => setEndTimecode(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur() }} value={endTimecode} />
-          </label>
+          <label className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">Trim end <input aria-label="Trim end timecode" className="w-28 rounded border bg-background px-2 py-1 font-mono disabled:opacity-50" disabled={session.mode === "image"} onBlur={(event) => applyTimecode("end", event.currentTarget.value)} onChange={(event) => setEndTimecode(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur() }} value={endTimecode} /></label>
+          <button aria-label="Download Trimmed Video" className="flex shrink-0 items-center gap-1 rounded border px-2 py-1.5 text-xs disabled:opacity-50" disabled={busy || !duration} onClick={downloadTrim} title="Downloads the trimmed original video. Saved frame edits are not composited into this Phase 1 output." type="button"><Download className="h-4 w-4" />Download Trimmed Video</button>
         </div>
         {project.frameEdits.length > 0 && <p className="mt-1 text-xs text-muted-foreground">Saved frame edits remain standalone images and are not included in the trimmed original video.</p>}
         {dragging && <p className="mt-1 text-xs text-muted-foreground">Adjusting trim {dragging}…</p>}
