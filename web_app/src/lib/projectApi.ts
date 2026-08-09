@@ -84,7 +84,9 @@ export async function saveProjectFrameEdit(
 ): Promise<FrameEdit> {
   const body = new FormData()
   body.append("render", render, render.name)
-  body.append("metadata", JSON.stringify({ frame_ordinal: ordinal, edit_id: editId ?? null }))
+  body.append("ordinal", String(ordinal))
+  body.append("document", JSON.stringify({ schema_version: 1 }))
+  if (editId) body.append("frame_edit_id", editId)
   const data = record(await requireJson(await fetch(`${API_ENDPOINT}/projects/${projectId}/frame-edits`, { method: "POST", body })))
   return {
     id: stringValue(data.id ?? data.edit_id),
