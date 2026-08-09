@@ -41,10 +41,14 @@ function normalizeProject(payload: unknown): VideoProject {
     }),
     frameEdits: rawEdits.map((item) => {
       const edit = record(item)
+      const editId = stringValue(edit.id ?? edit.edit_id)
+      const explicitRenderUrl = stringValue(edit.render_url ?? edit.renderUrl)
       return {
-        id: stringValue(edit.id ?? edit.edit_id),
-        frameOrdinal: Number(edit.frame_ordinal ?? edit.frameOrdinal ?? 0),
-        renderUrl: stringValue(edit.render_url ?? edit.renderUrl) || undefined,
+        id: editId,
+        frameOrdinal: Number(edit.ordinal ?? edit.frame_ordinal ?? edit.frameOrdinal ?? 0),
+        renderUrl: explicitRenderUrl || (edit.render_hash && editId
+          ? `${API_ENDPOINT}/projects/${stringValue(data.id ?? data.project_id)}/frame-edits/${editId}/image`
+          : undefined),
         updatedAt: stringValue(edit.updated_at ?? edit.updatedAt) || undefined,
       }
     }),

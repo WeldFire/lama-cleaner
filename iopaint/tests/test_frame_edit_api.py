@@ -52,5 +52,8 @@ def test_project_frame_and_frame_edit_endpoints(tmp_path, monkeypatch):
     assert saved.status_code == 200
     edit_id = saved.json()["id"]
     assert client.get(f"/api/v1/projects/{project_id}/frame-edits").json()[0]["document"] == {"tool": "erase"}
+    reopened = client.get(f"/api/v1/projects/{project_id}/frame-edits/{edit_id}/image")
+    assert reopened.status_code == 200
+    assert reopened.content == b"edited png"
     assert client.delete(f"/api/v1/projects/{project_id}/frame-edits/{edit_id}").json()["deleted"] is True
     assert client.get(f"/api/v1/projects/{project_id}/frame-edits").json() == []

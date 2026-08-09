@@ -27,6 +27,11 @@ class FrameEditApi:
         self.router.add_api_route("/{project_id}/frames/{ordinal}/image", self.frame_image, methods=["GET"])
         self.router.add_api_route("/{project_id}/frame-edits", self.list_frame_edits, methods=["GET"])
         self.router.add_api_route("/{project_id}/frame-edits", self.save_frame_edit, methods=["POST"])
+        self.router.add_api_route(
+            "/{project_id}/frame-edits/{frame_edit_id}/image",
+            self.frame_edit_image,
+            methods=["GET"],
+        )
         self.router.add_api_route("/{project_id}/frame-edits/{frame_edit_id}", self.delete_frame_edit, methods=["DELETE"])
 
     def create_project(self, file: UploadFile = File(...), name: str = Form("Untitled video project")):
@@ -133,6 +138,24 @@ class FrameEditApi:
         try:
             self.store.transact(handle, ProjectMutation("delete_frame_edit", {"id": frame_edit_id}))
             return {"id": frame_edit_id, "deleted": True}
+        finally:
+            self.store.close(handle)
+
+    def frame_edit_image(self, project_id: str, frame_edit_id: str):
+        """Return the immutable render owned by a saved Frame Edit."""
+        handle = self._open(project_id, "read")
+        try:
+            edit = next(
+                (item for item in self.store.project_snapshot(handle)["frame_edits"] if item["id"] == frame_edit_id),
+                None,
+            )
+            if edit is None or not edit.get("render_hash"):
+                raise HTTPException(status_code=404, detail="Frame edit render not found")
+            return FileResponse(
+                self.store.asset_path(handle, edit["render_hash"]),
+                media_type="image/png",
+                filename=f"frame-edit-{frame_edit_id}.png",
+            )
         finally:
             self.store.close(handle)
 
