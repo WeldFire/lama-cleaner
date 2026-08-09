@@ -38,6 +38,12 @@ def test_project_frame_and_frame_edit_endpoints(tmp_path, monkeypatch):
     )
     assert created.status_code == 200
     project_id = created.json()["project_id"]
+    assert created.json()["name"] == "Test project"
+    renamed = client.patch(f"/api/v1/projects/{project_id}", json={"name": "Renamed project"})
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "Renamed project"
+    assert client.get("/api/v1/projects").json()[0]["name"] == "Renamed project"
+    assert client.patch(f"/api/v1/projects/{project_id}", json={"name": "  "}).status_code == 400
     assert client.get(f"/api/v1/projects/{project_id}/frames").json()[0]["pts_ticks"] == "0"
 
     image = client.get(f"/api/v1/projects/{project_id}/frames/0/image")

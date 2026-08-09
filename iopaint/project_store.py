@@ -120,6 +120,11 @@ class ProjectStore:
             self._apply_mutation(connection, mutation.kind, payload)
             connection.execute("UPDATE metadata SET value=? WHERE key='revision'", (str(revision),))
         with sqlite3.connect(self._catalog) as catalog:
+            if mutation.kind == "rename_project":
+                catalog.execute(
+                    "UPDATE projects SET name=? WHERE id=?",
+                    (payload["name"], handle.project_id),
+                )
             catalog.execute("UPDATE projects SET updated_at=? WHERE id=?", (_now(), handle.project_id))
             name = catalog.execute("SELECT name FROM projects WHERE id=?", (handle.project_id,)).fetchone()[0]
         self._write_manifest(handle.path, handle.project_id, name, revision)
@@ -192,6 +197,11 @@ class ProjectStore:
                 "INSERT OR REPLACE INTO metadata(key,value) VALUES('session_state',?)",
                 (json.dumps(session_state, sort_keys=True),),
             )
+        elif kind == "rename_project":
+            # The display name is catalog metadata. The transaction still
+            # advances the project revision so the manifest and catalog move
+            # forward together under the writer's fencing token.
+            pass
         else:
             raise ValueError(f"Unsupported project mutation: {kind}")
 
@@ -227,14 +237,16 @@ class ProjectStore:
     def asset_path(handle: ProjectHandle, digest: str) -> Path:
         return handle.path / "assets" / digest[:2] / digest
 
-    @staticmethod
-    def project_snapshot(handle: ProjectHandle) -> dict[str, Any]:
+    def project_snapshot(self, handle: ProjectHandle) -> dict[str, Any]:
         source = handle.connection.execute("SELECT * FROM sources LIMIT 1").fetchone()
         frames = handle.connection.execute("SELECT ordinal,frame_key_json,png_hash FROM frames ORDER BY ordinal").fetchall()
         edits = handle.connection.execute("SELECT * FROM frame_edits WHERE deleted_at IS NULL ORDER BY ordinal").fetchall()
         session_row = handle.connection.execute("SELECT value FROM metadata WHERE key='session_state'").fetchone()
+        with sqlite3.connect(self._catalog) as catalog:
+            catalog_row = catalog.execute("SELECT name FROM projects WHERE id=?", (handle.project_id,)).fetchone()
         return {
             "project_id": handle.project_id,
+            "name": catalog_row[0] if catalog_row else "Untitled video project",
             "revision": int(handle.connection.execute("SELECT value FROM metadata WHERE key='revision'").fetchone()[0]),
             "source": None if source is None else {**dict(source), "metadata": json.loads(source["metadata_json"])},
             "frames": [{**json.loads(row["frame_key_json"]), "png_hash": row["png_hash"]} for row in frames],

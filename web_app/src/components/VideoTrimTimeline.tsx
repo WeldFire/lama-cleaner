@@ -267,12 +267,6 @@ export default function VideoTrimTimeline({ file }: { file: File }) {
       } else if (event.key === "ArrowRight") {
         event.preventDefault()
         stepFrame(1)
-      } else if (event.key === "[") {
-        event.preventDefault()
-        setTrimStart(currentRef.current)
-      } else if (event.key === "]") {
-        event.preventDefault()
-        setTrimEnd(currentRef.current)
       }
     }
     window.addEventListener("keydown", handleKeyboardShortcut)

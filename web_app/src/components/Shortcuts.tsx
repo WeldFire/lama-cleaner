@@ -10,6 +10,7 @@ import {
 } from "./ui/dialog"
 import useHotKey from "@/hooks/useHotkey"
 import { useStore } from "@/lib/states"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs"
 
 interface ShortcutProps {
   content: string
@@ -62,27 +63,28 @@ export function Shortcuts() {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Hotkeys</DialogTitle>
-          <div className="max-h-[70vh] space-y-5 overflow-y-auto pt-4">
-            <section className="space-y-2" aria-labelledby="video-hotkeys">
-              <h3 className="text-sm font-semibold" id="video-hotkeys">Video editing</h3>
+          <Tabs className="pt-4" defaultValue="image">
+            <TabsList aria-label="Hotkey categories" className="grid w-full grid-cols-2">
+              <TabsTrigger value="image">Image editing</TabsTrigger>
+              <TabsTrigger value="video">Video editing</TabsTrigger>
+            </TabsList>
+            <TabsContent className="max-h-[58vh] space-y-2 overflow-y-auto pr-2" value="video">
               <ShortCut content="Previous exact frame" keys={["←"]} />
               <ShortCut content="Next exact frame" keys={["→"]} />
-            </section>
-            <section className="space-y-2" aria-labelledby="image-hotkeys">
-              <h3 className="text-sm font-semibold" id="image-hotkeys">Image editing</h3>
-            <ShortCut content="Pan" keys={["Space + Drag"]} />
-            <ShortCut content="Reset Zoom/Pan" keys={["Esc"]} />
-            <ShortCut content="Decrease Brush Size" keys={["["]} />
-            <ShortCut content="Increase Brush Size" keys={["]"]} />
-            <ShortCut
-              content="Resize Brush"
-              keys={["Ctrl", "Alt", "← →"]}
-            />
-            <ShortCut content="View Original Image" keys={["Hold Tab"]} />
-            <ShortCut content="Crop Image" keys={["C"]} />
-            <ShortCut content="Confirm Crop" keys={["Enter"]} />
-            <ShortCut content="Cancel Crop" keys={["Esc"]} />
-            {interactiveSegHotkey && (
+              <ShortCut content="Play / Pause" keys={["Space"]} />
+              <ShortCut content="Toggle Hotkeys Dialog" keys={["H"]} />
+            </TabsContent>
+            <TabsContent className="max-h-[58vh] space-y-2 overflow-y-auto pr-2" value="image">
+              <ShortCut content="Pan" keys={["Space + Drag"]} />
+              <ShortCut content="Reset Zoom/Pan" keys={["Esc"]} />
+              <ShortCut content="Decrease Brush Size" keys={["["]} />
+              <ShortCut content="Increase Brush Size" keys={["]"]} />
+              <ShortCut content="Resize Brush" keys={["Ctrl", "Alt", "← →"]} />
+              <ShortCut content="View Original Image" keys={["Hold Tab"]} />
+              <ShortCut content="Crop Image" keys={["C"]} />
+              <ShortCut content="Confirm Crop" keys={["Enter"]} />
+              <ShortCut content="Cancel Crop" keys={["Esc"]} />
+              {interactiveSegHotkey && (
               <ShortCut
                 content="Interactive Segmentation"
                 keys={interactiveSegHotkey
@@ -101,24 +103,21 @@ export function Shortcuts() {
                       : k
                   )}
               />
-            )}
-            <ShortCut content="Accept Seg Mask" keys={["Enter"]} />
-            <ShortCut content="Cancel Seg / Undo Point" keys={["Esc", "Ctrl+Z"]} />
-            <ShortCut content="Expand / Shrink Seg Mask" keys={["Ctrl", "Alt", "← →"]} />
+              )}
+              <ShortCut content="Accept Seg Mask" keys={["Enter"]} />
+              <ShortCut content="Cancel Seg / Undo Point" keys={["Esc", "Ctrl+Z"]} />
+              <ShortCut content="Expand / Shrink Seg Mask" keys={["Ctrl", "Alt", "← →"]} />
 
-            <ShortCut content="Undo" keys={[CmdOrCtrl(), "Z"]} />
-            <ShortCut content="Redo" keys={[CmdOrCtrl(), "Shift", "Z"]} />
-            <ShortCut content="Copy Result" keys={[CmdOrCtrl(), "C"]} />
-            <ShortCut content="Paste Image" keys={[CmdOrCtrl(), "V"]} />
-            <ShortCut
-              content="Trigger Manually Inpainting"
-              keys={["Shift", "R"]}
-            />
-            <ShortCut content="Toggle Hotkeys Dialog" keys={["H"]} />
-            <ShortCut content="Toggle Settings Dialog" keys={["S"]} />
-            <ShortCut content="Toggle File Manager" keys={["F"]} />
-            </section>
-          </div>
+              <ShortCut content="Undo" keys={[CmdOrCtrl(), "Z"]} />
+              <ShortCut content="Redo" keys={[CmdOrCtrl(), "Shift", "Z"]} />
+              <ShortCut content="Copy Result" keys={[CmdOrCtrl(), "C"]} />
+              <ShortCut content="Paste Image" keys={[CmdOrCtrl(), "V"]} />
+              <ShortCut content="Trigger Manually Inpainting" keys={["Shift", "R"]} />
+              <ShortCut content="Toggle Hotkeys Dialog" keys={["H"]} />
+              <ShortCut content="Toggle Settings Dialog" keys={["S"]} />
+              <ShortCut content="Toggle File Manager" keys={["F"]} />
+            </TabsContent>
+          </Tabs>
         </DialogHeader>
       </DialogContent>
     </Dialog>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Loader2 } from "lucide-react"
+import { Check, Loader2, Pencil, X } from "lucide-react"
 
 import useInputImage from "@/hooks/useInputImage"
 import { dataURItoBlob, keepGUIAlive } from "@/lib/utils"
@@ -18,6 +18,7 @@ import {
   getProjectSource,
   getVideoProject,
   listVideoProjects,
+  renameVideoProject,
   type VideoProject,
   type VideoProjectSummary,
 } from "@/lib/projectApi"
@@ -145,6 +146,8 @@ function Home() {
   const [recentVideoProjects, setRecentVideoProjects] = useState<VideoProjectSummary[]>([])
   const [projectRestoreError, setProjectRestoreError] = useState("")
   const [projectDeleteCandidate, setProjectDeleteCandidate] = useState<VideoProjectSummary | null>(null)
+  const [projectRenameId, setProjectRenameId] = useState<string | null>(null)
+  const [projectRenameName, setProjectRenameName] = useState("")
 
   useEffect(() => {
     if (file && isVideoFile(file)) setVideoProjectSource((current) =>
@@ -353,10 +356,29 @@ function Home() {
           <div className="mt-2 flex max-h-36 flex-col gap-2 overflow-y-auto">
             {recentVideoProjects.map((project) => (
               <div className="flex items-center rounded border" key={project.id}>
-                <button className="flex min-w-0 flex-1 items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => void resumeVideoProject(project.id)} type="button">
-                  <span className="truncate">{project.name}</span>
-                  <span className="ml-3 shrink-0 text-xs text-muted-foreground">Continue</span>
-                </button>
+                {projectRenameId === project.id ? (
+                  <form className="flex min-w-0 flex-1 items-center" onSubmit={async (event) => {
+                    event.preventDefault()
+                    try {
+                      await renameVideoProject(project.id, projectRenameName)
+                      setProjectRenameId(null)
+                      refreshRecentProjects()
+                    } catch (reason) {
+                      setProjectRestoreError(reason instanceof Error ? reason.message : "Unable to rename this project")
+                    }
+                  }}>
+                    <label className="sr-only" htmlFor={`project-name-${project.id}`}>Project name</label>
+                    <input autoFocus className="min-w-0 flex-1 bg-transparent px-3 py-2 text-sm outline-none" id={`project-name-${project.id}`} maxLength={120} onChange={(event) => setProjectRenameName(event.target.value)} value={projectRenameName} />
+                    <button aria-label={`Save project name ${project.name}`} className="p-2 text-emerald-500" type="submit"><Check className="h-4 w-4" /></button>
+                    <button aria-label={`Cancel renaming ${project.name}`} className="p-2 text-muted-foreground" onClick={() => setProjectRenameId(null)} type="button"><X className="h-4 w-4" /></button>
+                  </form>
+                ) : (
+                  <button className="flex min-w-0 flex-1 items-center justify-between px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => void resumeVideoProject(project.id)} type="button">
+                    <span className="truncate">{project.name}</span>
+                    <span className="ml-3 shrink-0 text-xs text-muted-foreground">Continue</span>
+                  </button>
+                )}
+                <button aria-label={`Rename project ${project.name}`} className="border-l p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => { setProjectRenameId(project.id); setProjectRenameName(project.name) }} type="button"><Pencil className="h-4 w-4" /></button>
                 <button aria-label={`Delete project ${project.name}`} className="border-l px-3 py-2 text-xs text-destructive hover:bg-accent" onClick={() => setProjectDeleteCandidate(project)} type="button">Delete</button>
               </div>
             ))}

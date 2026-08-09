@@ -77,3 +77,17 @@ def test_session_state_is_persisted_with_project(tmp_path):
         "trim_end_ordinal": 11,
     }
     store.close(reopened)
+
+
+def test_project_rename_updates_catalog_snapshot_and_manifest(tmp_path):
+    store = ProjectStore(tmp_path)
+    handle = store.open(name="Original name")
+
+    revision = store.transact(handle, ProjectMutation("rename_project", {"name": "Vacation cleanup"}))
+
+    assert revision == 1
+    assert store.project_snapshot(handle)["name"] == "Vacation cleanup"
+    assert store.lifecycle(None, "list")[0]["name"] == "Vacation cleanup"
+    manifest = (handle.path / "manifest.json").read_text(encoding="utf-8")
+    assert '"name": "Vacation cleanup"' in manifest
+    store.close(handle)

@@ -23,6 +23,7 @@ class FrameEditApi:
         self.router.add_api_route("", self.create_project, methods=["POST"])
         self.router.add_api_route("", self.list_projects, methods=["GET"])
         self.router.add_api_route("/{project_id}", self.get_project, methods=["GET"])
+        self.router.add_api_route("/{project_id}", self.rename_project, methods=["PATCH"])
         self.router.add_api_route("/{project_id}", self.delete_project, methods=["DELETE"])
         self.router.add_api_route("/{project_id}/source", self.project_source, methods=["GET"])
         self.router.add_api_route("/{project_id}/session", self.save_session, methods=["PUT"])
@@ -75,6 +76,20 @@ class FrameEditApi:
 
     def get_project(self, project_id: str):
         return self._snapshot(project_id)
+
+    def rename_project(self, project_id: str, payload: dict = Body(...)):
+        name = payload.get("name") if isinstance(payload, dict) else None
+        if not isinstance(name, str) or not name.strip():
+            raise HTTPException(status_code=400, detail="Project name cannot be empty")
+        normalized_name = name.strip()
+        if len(normalized_name) > 120:
+            raise HTTPException(status_code=400, detail="Project name must be 120 characters or fewer")
+        handle = self._open(project_id, "write")
+        try:
+            self.store.transact(handle, ProjectMutation("rename_project", {"name": normalized_name}))
+            return self.store.project_snapshot(handle)
+        finally:
+            self.store.close(handle)
 
     def delete_project(self, project_id: str):
         """Logically delete a project so its data remains recoverable."""

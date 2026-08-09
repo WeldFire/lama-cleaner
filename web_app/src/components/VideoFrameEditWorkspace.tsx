@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Download, Edit3, Loader2, Pause, Play, Save, Trash2, Video } from "lucide-react"
+import { Check, ChevronLeft, ChevronRight, Download, Edit3, Loader2, Pause, Pencil, Play, Save, Trash2, Video, X } from "lucide-react"
 import { useEffect, useMemo, useReducer, useRef, useState, type PointerEvent } from "react"
 
 import Workspace from "@/components/Workspace"
@@ -21,10 +21,12 @@ import {
   getVideoProject,
   saveProjectSession,
   saveProjectFrameEdit,
+  renameVideoProject,
   type VideoProject,
 } from "@/lib/projectApi"
 import { useStore } from "@/lib/states"
 import { trimVideo } from "@/lib/videoApi"
+import { resolveVideoHotkey } from "@/lib/videoHotkeys"
 
 const PRECISE_SEEK_DELAY_MS = 500
 const PREVIEW_SEEK_INTERVAL_MS = 100
@@ -108,6 +110,8 @@ export default function VideoFrameEditWorkspace({
   const [startTimecode, setStartTimecode] = useState(formatTimecode(0))
   const [endTimecode, setEndTimecode] = useState(formatTimecode(0))
   const [sessionSaveError, setSessionSaveError] = useState("")
+  const [renamingProject, setRenamingProject] = useState(false)
+  const [projectName, setProjectName] = useState("")
 
   useEffect(() => () => URL.revokeObjectURL(source), [source])
 
@@ -136,6 +140,7 @@ export default function VideoFrameEditWorkspace({
       .then((created) => {
         if (!live) return
         setProject(created)
+        setProjectName(created.name)
         dispatch({
           type: "HYDRATE",
           frameCount: created.frames.length,
@@ -196,21 +201,16 @@ export default function VideoFrameEditWorkspace({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || busy ||
+      if (event.defaultPrevented || busy ||
           target?.isContentEditable || target?.tagName === "INPUT" || target?.tagName === "TEXTAREA") return
-      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      const action = resolveVideoHotkey(session.mode, event.key, event.metaKey || event.ctrlKey || event.altKey)
+      if (action === "previous-frame" || action === "next-frame") {
         event.preventDefault()
-        requestNavigation(session.currentOrdinal + (event.key === "ArrowLeft" ? -1 : 1))
-      } else if (event.key === " " && session.mode === "video") {
+        requestNavigation(session.currentOrdinal + (action === "previous-frame" ? -1 : 1))
+      } else if (action === "toggle-playback") {
         event.preventDefault()
         if (videoRef.current?.paused) void videoRef.current.play()
         else videoRef.current?.pause()
-      } else if (event.key === "[" && session.mode === "video") {
-        event.preventDefault()
-        dispatch({ type: "SET_TRIM", start: Math.min(session.currentOrdinal, Math.max(0, session.trimEndOrdinal - (project && project.frames.length > 1 ? 1 : 0))), end: session.trimEndOrdinal })
-      } else if (event.key === "]" && session.mode === "video") {
-        event.preventDefault()
-        dispatch({ type: "SET_TRIM", start: session.trimStartOrdinal, end: Math.max(session.currentOrdinal, session.trimStartOrdinal + (project && project.frames.length > 1 ? 1 : 0)) })
       }
     }
     window.addEventListener("keydown", onKeyDown)
@@ -492,15 +492,49 @@ export default function VideoFrameEditWorkspace({
     }
   }
 
+  const saveProjectName = async () => {
+    if (!project) return
+    const normalized = projectName.trim()
+    if (!normalized || normalized === project.name) {
+      setProjectName(project.name)
+      setRenamingProject(false)
+      return
+    }
+    try {
+      setBusy(true)
+      const renamed = await renameVideoProject(project.id, normalized)
+      setProject(renamed)
+      setProjectName(renamed.name)
+      onProjectReady?.(renamed)
+      setRenamingProject(false)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to rename this project")
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <>
       <div className="fixed left-6 top-20 z-40 flex gap-2">
         <button className="rounded border bg-background/95 px-3 py-2 text-sm shadow" onClick={() => requestProjectExit("close")} type="button">
           <ChevronLeft className="mr-1 inline h-4 w-4" />Back to projects
         </button>
-        <button className="rounded border border-destructive/50 bg-background/95 px-3 py-2 text-sm text-destructive shadow" onClick={() => requestProjectExit("delete-project")} type="button">
+        <button className="rounded border border-red-500 bg-red-950 px-3 py-2 text-sm font-medium text-red-100 shadow hover:bg-red-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400" onClick={() => requestProjectExit("delete-project")} type="button">
           <Trash2 className="mr-1 inline h-4 w-4" />Delete project
         </button>
+        {renamingProject ? (
+          <form className="flex items-center rounded border bg-background/95 shadow" onSubmit={(event) => { event.preventDefault(); void saveProjectName() }}>
+            <label className="sr-only" htmlFor="active-project-name">Project name</label>
+            <input autoFocus className="w-56 bg-transparent px-3 py-2 text-sm outline-none" id="active-project-name" maxLength={120} onChange={(event) => setProjectName(event.target.value)} value={projectName} />
+            <button aria-label="Save project name" className="p-2 text-emerald-500" disabled={busy} type="submit"><Check className="h-4 w-4" /></button>
+            <button aria-label="Cancel project rename" className="p-2 text-muted-foreground" onClick={() => { setProjectName(project.name); setRenamingProject(false) }} type="button"><X className="h-4 w-4" /></button>
+          </form>
+        ) : (
+          <button className="rounded border bg-background/95 px-3 py-2 text-sm shadow hover:bg-accent" onClick={() => setRenamingProject(true)} type="button">
+            <Pencil className="mr-1 inline h-4 w-4" />{project.name}
+          </button>
+        )}
       </div>
       {session.mode === "image" ? (
         <Workspace />
@@ -564,7 +598,7 @@ export default function VideoFrameEditWorkspace({
             aria-valuenow={session.currentOrdinal}
           >
             <div className="absolute inset-x-0 top-3 h-2 rounded bg-muted" />
-            <div className="absolute top-3 h-2 bg-primary" style={{ left: `${percentFor(session.trimStartOrdinal)}%`, right: `${100 - outPercent}%` }} />
+            <div className="absolute top-3 h-2 bg-blue-600" style={{ left: `${percentFor(session.trimStartOrdinal)}%`, right: `${100 - outPercent}%` }} />
             {project.frameEdits.map((edit) => (
               <button
                 aria-label={`Open saved edit for frame ${edit.frameOrdinal + 1}`}

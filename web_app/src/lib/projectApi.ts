@@ -3,6 +3,7 @@ import type { FrameEdit, FrameKey } from "@/lib/frameEditSession"
 
 export type VideoProject = {
   id: string
+  name: string
   sourceName: string
   frames: FrameKey[]
   frameEdits: FrameEdit[]
@@ -46,6 +47,7 @@ function normalizeProject(payload: unknown): VideoProject {
   const hasSession = Object.keys(rawSession).length > 0
   return {
     id: stringValue(data.id ?? data.project_id),
+    name: stringValue(data.name, "Untitled video project"),
     sourceName: stringValue(source.filename ?? data.source_name ?? data.sourceName, "video"),
     frames: rawFrames.map((item, index) => {
       const frame = record(item)
@@ -167,4 +169,12 @@ export async function deleteProjectFrameEdit(projectId: string, editId: string) 
 
 export async function deleteVideoProject(projectId: string) {
   await requireJson(await fetch(`${API_ENDPOINT}/projects/${projectId}`, { method: "DELETE" }))
+}
+
+export async function renameVideoProject(projectId: string, name: string): Promise<VideoProject> {
+  return normalizeProject(await requireJson(await fetch(`${API_ENDPOINT}/projects/${projectId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  })))
 }
