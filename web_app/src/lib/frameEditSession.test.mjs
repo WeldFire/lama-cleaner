@@ -54,3 +54,27 @@ test("dirty navigation resolves through save, discard, and keep-editing paths", 
   assert.equal(kept.dirty, true)
   assert.equal(kept.pending, null)
 })
+
+test("VFR presentation ordinal survives video-image-video navigation", () => {
+  const frameKeys = [
+    { ordinal: 0, projectTimeNum: "0", projectTimeDen: "1" },
+    { ordinal: 1, projectTimeNum: "1", projectTimeDen: "10" },
+    { ordinal: 2, projectTimeNum: "3", projectTimeDen: "10" },
+    { ordinal: 3, projectTimeNum: "3", projectTimeDen: "5" },
+  ]
+  let session = reduceFrameEditSession(createFrameEditSession(frameKeys.length), { type: "SEEK", ordinal: 2 })
+  const selectedKey = frameKeys[session.currentOrdinal]
+
+  session = reduceFrameEditSession(session, { type: "OPEN", ordinal: session.currentOrdinal })
+  assert.equal(session.mode, "image")
+  assert.deepEqual(frameKeys[session.currentOrdinal], selectedKey)
+
+  session = reduceFrameEditSession(session, { type: "REQUEST_RETURN" })
+  assert.equal(session.mode, "video")
+  assert.deepEqual(frameKeys[session.currentOrdinal], selectedKey)
+
+  session = reduceFrameEditSession(session, { type: "REQUEST_NAVIGATE", ordinal: session.currentOrdinal - 1 })
+  assert.deepEqual(frameKeys[session.currentOrdinal], frameKeys[1])
+  session = reduceFrameEditSession(session, { type: "REQUEST_NAVIGATE", ordinal: session.currentOrdinal + 1 })
+  assert.deepEqual(frameKeys[session.currentOrdinal], selectedKey)
+})
