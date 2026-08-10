@@ -30,6 +30,7 @@ Standing product decisions from the destination interview:
 - [Tracking runtime packaging and compatibility](issues/11-tracking-runtime-packaging-and-compatibility.md) — Isolate SAM 2.1 video tracking in pinned native/Docker workers with validated checkpoint bundles, explicit platform capability classes, deterministic memory fallbacks, and bounded cancellation/release gates.
 - [Processing, render, and recovery contract](issues/08-processing-render-and-recovery-contract.md) — Separate disposable Draft Previews from canonical Proof Previews, persist revision-keyed chunks/checkpoints, preserve VFR timing and synchronized primary audio, use quality-preserving resource fallbacks, and publish only strictly validated outputs through a deep MediaPipeline module.
 - [Implementation-ready phased specification](issues/09-implementation-ready-phased-specification.md) — Deliver Exact Frame Editing, Tracked Video Operations, then Edited Video Delivery, each gated by deep-module contracts, media fixtures, fault injection, browser/Docker coverage, decoded golden assertions, and bounded visual review.
+- [Python test baseline](issues/20-restore-full-python-test-baseline.md) — Pin the exact Diffusers/Transformers/Hub compatibility tuple; retain optional model/plugin cases as explicit qualification results while the supported CV2 and Exact Frame Editing workflows stay green.
 
 ## Not yet specified
 
@@ -65,7 +66,7 @@ Dependency graph:
 - 25 can start immediately and blocks 26; 26 then blocks 27.
 - 20 through 27 all block the final qualification report (28).
 
-- [Restore the full Python test baseline](issues/20-restore-full-python-test-baseline.md) — Ready: restore full-suite collection and execution under a compatible dependency baseline.
+- [Restore the full Python test baseline](issues/20-restore-full-python-test-baseline.md) — Resolved: all 288 tests collect and run; exact results and every model/plugin environment failure are classified.
 - [Qualify exact frames against a real-media fixture corpus](issues/21-qualify-real-media-exact-frame-corpus.md) — Ready: prove canonical identity and round trips across timing, geometry, color, codec, audio, and corruption cases.
 - [Automate the Phase 1 browser workflow](issues/22-automate-phase1-browser-workflow.md) — Ready: cover the approved user workflow, persistence, accessibility, and mode-owned hotkeys end to end.
 - [Persist resumable Frame Edit documents](issues/23-persist-resumable-frame-edit-documents.md) — Ready: retain editable masks, geometry, settings, and snapshots across restart.

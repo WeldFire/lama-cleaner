@@ -4,7 +4,10 @@ diffusers==0.27.2
 huggingface_hub==0.25.2
 accelerate
 peft==0.7.1
-transformers>=4.44
+# Pin the exact tested trio with Diffusers 0.27.2 and Hub 0.25.2. The previous
+# lower bound permitted newer Transformers releases whose Hub requirements
+# conflict with the Hub version required by Diffusers 0.27.2.
+transformers==4.44.2
 timm
 einops
 kornia
