@@ -46,6 +46,35 @@ None. The route to the destination is fully specified in [`spec.md`](spec.md).
 - [Distinguish Trimmed and Edited Video output](issues/18-distinguish-trimmed-and-edited-video-output.md) — Resolved: output is clearly labeled as trimmed original video.
 - [Resume project after page refresh](issues/19-resume-project-after-page-refresh.md) — Resolved: persistent selector and active-project restoration recover session state.
 
+## Phase 1 manual QA record
+
+- **PASS** — Rename an Editing Project, refresh/restart Docker, and confirm the name persists.
+- **PASS** — Verify each Hotkeys tab and confirm shortcuts do not cross modes.
+- **PASS** — Download an edited single frame and confirm its pixels.
+- **PASS** — Reopen several timeline markers and Frame Edit tray entries.
+- **PASS** — Delete Editing Projects and Frame Edits through their confirmation flows.
+- **PASS** — Confirm trims at the first frame, last frame, and a very short range.
+- **SKIPPED — assumed passed, not verified evidence** — Exercise a VFR video, VP9 WebM video, rotated phone video, and video with audio.
+
+## Phase 1 qualification backlog
+
+Dependency graph:
+
+- 20 can start immediately and blocks the final report (28).
+- 21, 22, 23, and 24 can start immediately; together with 25 and 26 they block platform qualification (27).
+- 25 can start immediately and blocks 26; 26 then blocks 27.
+- 20 through 27 all block the final qualification report (28).
+
+- [Restore the full Python test baseline](issues/20-restore-full-python-test-baseline.md) — Ready: restore full-suite collection and execution under a compatible dependency baseline.
+- [Qualify exact frames against a real-media fixture corpus](issues/21-qualify-real-media-exact-frame-corpus.md) — Ready: prove canonical identity and round trips across timing, geometry, color, codec, audio, and corruption cases.
+- [Automate the Phase 1 browser workflow](issues/22-automate-phase1-browser-workflow.md) — Ready: cover the approved user workflow, persistence, accessibility, and mode-owned hotkeys end to end.
+- [Persist resumable Frame Edit documents](issues/23-persist-resumable-frame-edit-documents.md) — Ready: retain editable masks, geometry, settings, and snapshots across restart.
+- [Relink moved sources and quarantine mismatches](issues/24-relink-sources-and-quarantine-mismatches.md) — Ready: recover moved sources by fingerprint without attaching work to mismatches.
+- [Fault-test atomic project commits](issues/25-fault-test-atomic-project-commits.md) — Ready: prove failure boundaries retain a complete prior or new revision.
+- [Qualify migrations, read-only recovery, and writer leases](issues/26-qualify-migrations-recovery-and-writer-leases.md) — Blocked by 25.
+- [Qualify native and Docker project workflows](issues/27-qualify-native-and-docker-project-workflows.md) — Blocked by 21–26.
+- [Publish the Phase 1 qualification report](issues/28-publish-phase1-qualification-report.md) — Blocked by 20–27.
+
 ## Out of scope
 
 - General multi-clip editing, transitions, titles, color grading, or a multi-track nonlinear timeline.

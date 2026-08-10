@@ -350,8 +350,8 @@ function Home() {
       ) : (
         <></>
       )}
-      {!videoProjectSource && recentVideoProjects.length > 0 && (
-        <section className="fixed bottom-6 left-1/2 z-20 w-[min(32rem,calc(100%-2rem))] -translate-x-1/2 rounded-lg border bg-background/95 p-4 shadow-lg" aria-label="Recent video projects">
+      {!file && !videoProjectSource && recentVideoProjects.length > 0 && (
+        <section className="fixed bottom-6 right-4 z-20 w-[min(32rem,calc(100%-2rem))] rounded-lg border bg-background/95 p-4 shadow-lg" aria-label="Recent video projects">
           <h2 className="text-sm font-semibold">Continue a video project</h2>
           <div className="mt-2 flex max-h-36 flex-col gap-2 overflow-y-auto">
             {recentVideoProjects.map((project) => (
