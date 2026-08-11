@@ -9,6 +9,7 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "test:frame-session": "node --experimental-strip-types src/lib/frameEditSession.test.mjs",
     "test:video-hotkeys": "node --experimental-strip-types src/lib/videoHotkeys.test.mjs",
+    "test:e2e:frame-editing": "playwright test --config playwright.config.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -62,6 +63,7 @@
     "zustand": "^4.4.6"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
     "@tanstack/eslint-plugin-query": "^5.8.4",
     "@types/axios": "^0.14.0",
     "@types/flexsearch": "^0.7.6",

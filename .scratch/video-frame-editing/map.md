@@ -32,6 +32,7 @@ Standing product decisions from the destination interview:
 - [Implementation-ready phased specification](issues/09-implementation-ready-phased-specification.md) — Deliver Exact Frame Editing, Tracked Video Operations, then Edited Video Delivery, each gated by deep-module contracts, media fixtures, fault injection, browser/Docker coverage, decoded golden assertions, and bounded visual review.
 - [Python test baseline](issues/20-restore-full-python-test-baseline.md) — Pin the exact Diffusers/Transformers/Hub compatibility tuple; retain optional model/plugin cases as explicit qualification results while the supported CV2 and Exact Frame Editing workflows stay green.
 - [Real-media exact-frame qualification](issues/21-qualify-real-media-exact-frame-corpus.md) — Generate timing, geometry, color, codec, stream, audio, and failure fixtures; compare rational presentation identity and decoded canonical pixels rather than container bytes.
+- [Phase 1 browser workflow qualification](research/phase1-browser-workflow.md) — Exercise project lifecycle, exact-frame editing, trim/download behavior, leave guards, markers/tray operations, and mode-owned hotkeys on the Docker-served application route.
 
 ## Not yet specified
 
@@ -69,7 +70,7 @@ Dependency graph:
 
 - [Restore the full Python test baseline](issues/20-restore-full-python-test-baseline.md) — Resolved: all 288 tests collect and run; exact results and every model/plugin environment failure are classified.
 - [Qualify exact frames against a real-media fixture corpus](issues/21-qualify-real-media-exact-frame-corpus.md) — Resolved: deterministic real media proves exact rational timing, stable decoded pixels, display geometry, color metadata/tone-map routing, and actionable corruption handling.
-- [Automate the Phase 1 browser workflow](issues/22-automate-phase1-browser-workflow.md) — Ready: cover the approved user workflow, persistence, accessibility, and mode-owned hotkeys end to end.
+- [Automate the Phase 1 browser workflow](issues/22-automate-phase1-browser-workflow.md) — Resolved: three isolated Playwright scenarios qualify browser interactions, while a gated real-Docker scenario proves persisted project/Frame Edit recovery across an application restart.
 - [Persist resumable Frame Edit documents](issues/23-persist-resumable-frame-edit-documents.md) — Ready: retain editable masks, geometry, settings, and snapshots across restart.
 - [Relink moved sources and quarantine mismatches](issues/24-relink-sources-and-quarantine-mismatches.md) — Ready: recover moved sources by fingerprint without attaching work to mismatches.
 - [Fault-test atomic project commits](issues/25-fault-test-atomic-project-commits.md) — Ready: prove failure boundaries retain a complete prior or new revision.
