@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Persist the latest rendered image, editable mask data, canvas geometry, necessary tool settings, and operation snapshot for each Frame Edit.
 - [ ] Reopening a Frame Edit after browser refresh, backend restart, and Docker recreation restores equivalent editable pixels and mask alignment.

@@ -71,7 +71,7 @@ Dependency graph:
 - [Restore the full Python test baseline](issues/20-restore-full-python-test-baseline.md) — Resolved: all 288 tests collect and run; exact results and every model/plugin environment failure are classified.
 - [Qualify exact frames against a real-media fixture corpus](issues/21-qualify-real-media-exact-frame-corpus.md) — Resolved: deterministic real media proves exact rational timing, stable decoded pixels, display geometry, color metadata/tone-map routing, and actionable corruption handling.
 - [Automate the Phase 1 browser workflow](issues/22-automate-phase1-browser-workflow.md) — Resolved: three isolated Playwright scenarios qualify browser interactions, while a gated real-Docker scenario proves persisted project/Frame Edit recovery across an application restart.
-- [Persist resumable Frame Edit documents](issues/23-persist-resumable-frame-edit-documents.md) — Ready: retain editable masks, geometry, settings, and snapshots across restart.
+- [Persist resumable Frame Edit documents](issues/23-persist-resumable-frame-edit-documents.md) — Claimed: retain editable masks, geometry, settings, and snapshots across restart.
 - [Relink moved sources and quarantine mismatches](issues/24-relink-sources-and-quarantine-mismatches.md) — Ready: recover moved sources by fingerprint without attaching work to mismatches.
 - [Fault-test atomic project commits](issues/25-fault-test-atomic-project-commits.md) — Ready: prove failure boundaries retain a complete prior or new revision.
 - [Qualify migrations, read-only recovery, and writer leases](issues/26-qualify-migrations-recovery-and-writer-leases.md) — Blocked by 25.
