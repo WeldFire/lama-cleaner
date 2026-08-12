@@ -115,6 +115,9 @@ def test_writer_lease_heartbeat_abandonment_takeover_and_restart(tmp_path):
     now = [1000.0]
     first_store = ProjectStore(tmp_path, instance_id="first", clock=lambda: now[0])
     first = first_store.open()
+    first_store.transact(first, ProjectMutation(
+        "save_frame_edit", {"id": "edit", "ordinal": 0, "document": {}}, {"render": b"render"},
+    ))
     project_id = first.project_id
     lease = json.loads((first.path / "writer-lease.json").read_text())
     assert lease["instance_id"] == "first"
@@ -279,6 +282,9 @@ def test_lease_transition_fault_recovers_by_expiry_and_fences_stale_writer(tmp_p
     fault = FaultAt(boundary)
     store = ProjectStore(tmp_path, fault_hook=fault, instance_id="first", clock=lambda: now[0])
     handle = store.open()
+    store.transact(handle, ProjectMutation(
+        "save_frame_edit", {"id": "edit", "ordinal": 0, "document": {}}, {"render": b"render"},
+    ))
     project_id = handle.project_id
     fault.armed = True
     with pytest.raises(RuntimeError):

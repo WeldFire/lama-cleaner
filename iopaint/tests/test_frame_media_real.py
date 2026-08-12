@@ -52,6 +52,7 @@ def make_cfr(tmp_path: Path) -> Path:
         "-f", "lavfi", "-i", "testsrc2=size=32x24:rate=5:duration=1",
         "-an", "-c:v", "libx264", "-bf", "2", "-g", "10", "-pix_fmt", "yuv420p",
         "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
+        "-bsf:v", "h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1",
     )
 
 
@@ -106,6 +107,7 @@ def make_hdr_tagged(tmp_path: Path) -> Path:
         "-f", "lavfi", "-i", "testsrc2=size=32x24:rate=4:duration=1",
         "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
         "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
+        "-bsf:v", "h264_metadata=colour_primaries=9:transfer_characteristics=16:matrix_coefficients=9",
     )
 
 
