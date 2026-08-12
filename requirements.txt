@@ -14,6 +14,8 @@ kornia
 safetensors
 controlnet-aux==0.0.3
 fastapi==0.108.0
+# Starlette 0.32 TestClient still passes the removed `app=` argument.
+httpx<0.28
 uvicorn
 python-multipart
 python-socketio==5.7.2
