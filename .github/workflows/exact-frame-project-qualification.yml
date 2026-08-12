@@ -46,7 +46,7 @@ jobs:
           cache: npm
           cache-dependency-path: web_app/package-lock.json
       - name: Install exact-frame test dependencies
-        run: python -m pip install pytest fastapi python-multipart httpx pillow numpy
+        run: python -m pip install pytest pytest-github-actions-annotate-failures fastapi python-multipart httpx pillow numpy
       - name: Install FFmpeg on macOS
         if: runner.os == 'macOS'
         run: brew install ffmpeg
