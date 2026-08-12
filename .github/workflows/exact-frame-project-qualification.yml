@@ -2,6 +2,19 @@ name: Exact frame project qualification
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/exact-frame-project-qualification.yml"
+      - "docker/**"
+      - "docker-compose.yml"
+      - "iopaint/project_store.py"
+      - "iopaint/frame_edit_api.py"
+      - "iopaint/frame_media.py"
+      - "iopaint/tests/**"
+      - "web_app/src/**"
+      - "web_app/tests/**"
+      - "web_app/package*.json"
   pull_request:
     paths:
       - ".github/workflows/exact-frame-project-qualification.yml"
