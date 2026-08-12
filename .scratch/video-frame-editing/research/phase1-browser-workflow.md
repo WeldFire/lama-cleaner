@@ -25,7 +25,7 @@ $env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH='C:\Users\Administrator\AppData\Local\m
 npm.cmd run test:e2e:frame-editing
 ```
 
-Result on 2026-08-12: **5 passed** before the undo-lifecycle scenario was added. The final candidate matrix runs all six isolated scenarios (the real-Docker scenario remains separately gated).
+Result on 2026-08-12: **6 passed** against the Docker-served frontend. The final native candidate matrix also runs all six isolated scenarios (the real-Docker scenario remains separately gated).
 
 Real Docker persistence and restart command (this intentionally restarts the Compose `app` service and deletes only the uniquely named project it creates):
 

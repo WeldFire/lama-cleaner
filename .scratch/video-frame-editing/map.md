@@ -77,7 +77,7 @@ Dependency graph:
 - [Fault-test atomic project commits](issues/25-fault-test-atomic-project-commits.md) — Resolved: deterministic creation/asset/SQLite/catalog/manifest/cleanup faults recover coherent revisions; restart audits SQLite and asset hashes and quarantines damage.
 - [Qualify migrations, read-only recovery, and writer leases](issues/26-qualify-migrations-recovery-and-writer-leases.md) — Resolved: transactional backup migrations, true read-only recovery, atomic renewable leases, confirmed takeover, and owner+token fencing are qualified.
 - [Qualify native and Docker project workflows](issues/27-qualify-native-and-docker-project-workflows.md) — Resolved: one native matrix run qualifies Windows, Ubuntu, and macOS backend/real-media/browser workflows, while Docker proves relink and project-volume survival across auxiliary-volume replacement and service recreation.
-- [Publish the Phase 1 qualification report](issues/28-publish-phase1-qualification-report.md) — Claimed: final candidate matrix and exact runtime inventory are being captured before publication.
+- [Publish the Phase 1 qualification report](issues/28-publish-phase1-qualification-report.md) — Resolved: candidate `a11149f` passed the exact native matrix, Docker evidence and runtime inventories are recorded, and Phase 1 is qualified for the declared SDR capability matrix with macOS HDR explicitly not qualified.
 - [Add video frame actions and lazy project persistence](issues/29-add-video-frame-actions-and-lazy-projects.md) — Resolved: volume and canonical Save Frame controls ship with draft projects promoted only by their first saved Frame Edit.
 
 ## Out of scope
