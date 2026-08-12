@@ -472,10 +472,12 @@ class ProjectStore:
                             # an otherwise complete project unavailable.
                             pass
                 metadata = {row["key"]: row["value"] for row in connection.execute("SELECT key,value FROM metadata")}
+                source_hashes = {
+                    row[0] for row in connection.execute("SELECT asset_hash FROM sources")
+                }
                 referenced = {
                     row[0]
                     for query in (
-                        "SELECT asset_hash FROM sources",
                         "SELECT png_hash FROM frames WHERE png_hash IS NOT NULL",
                         "SELECT render_hash FROM frame_edits WHERE render_hash IS NOT NULL",
                         "SELECT mask_hash FROM frame_edits WHERE mask_hash IS NOT NULL",
@@ -487,6 +489,10 @@ class ProjectStore:
                     asset = project_path / "assets" / digest[:2] / digest
                     if not asset.exists() or hashlib.sha256(asset.read_bytes()).hexdigest() != digest:
                         invalid.append(digest)
+                for digest in source_hashes:
+                    asset = project_path / "assets" / digest[:2] / digest
+                    if asset.exists() and hashlib.sha256(asset.read_bytes()).hexdigest() != digest:
+                        invalid.append(digest)
                 if invalid:
                     connection.execute(
                         "INSERT OR REPLACE INTO metadata(key,value) VALUES('integrity_error',?)",
@@ -494,8 +500,24 @@ class ProjectStore:
                     )
                     connection.commit()
                     continue
+                # A missing immutable Trim Input is recoverable through the
+                # fingerprint-verified relink flow. Authored frame assets are
+                # not, so only those put the project into integrity recovery.
+                missing_sources = [
+                    digest
+                    for digest in source_hashes
+                    if not (project_path / "assets" / digest[:2] / digest).exists()
+                ]
+                if missing_sources:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO metadata(key,value) VALUES('source_relink_required',?)",
+                        (json.dumps({"missing_assets": sorted(missing_sources)}),),
+                    )
+                else:
+                    connection.execute("DELETE FROM metadata WHERE key='source_relink_required'")
                 connection.execute("DELETE FROM metadata WHERE key='integrity_error'")
                 connection.commit()
+                referenced.update(source_hashes)
                 for asset in (project_path / "assets").glob("*/*"):
                     if asset.is_file() and asset.name not in referenced and now - asset.stat().st_mtime >= ORPHAN_GRACE_SECONDS:
                         try:

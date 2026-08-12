@@ -1,0 +1,59 @@
+name: Exact frame project qualification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/exact-frame-project-qualification.yml"
+      - "docker/**"
+      - "docker-compose.yml"
+      - "iopaint/project_store.py"
+      - "iopaint/frame_edit_api.py"
+      - "iopaint/frame_media.py"
+      - "iopaint/tests/**"
+      - "web_app/src/**"
+      - "web_app/tests/**"
+      - "web_app/package*.json"
+
+jobs:
+  native-project-workflow:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web_app/package-lock.json
+      - name: Install exact-frame test dependencies
+        run: python -m pip install pytest fastapi python-multipart httpx pillow numpy
+      - name: Install FFmpeg on macOS
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Install FFmpeg on Windows
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --no-progress -y
+      - name: Qualify project workflow and real-media corpus
+        run: python -m pytest iopaint/tests/test_project_store.py iopaint/tests/test_project_workflow_portability.py iopaint/tests/test_frame_edit_api.py iopaint/tests/test_frame_media.py iopaint/tests/test_frame_media_real.py -q
+      - name: Install browser workflow dependencies
+        working-directory: web_app
+        run: npm ci
+      - name: Install Chromium
+        working-directory: web_app
+        run: npx playwright install chromium
+      - name: Start native frontend
+        working-directory: web_app
+        shell: bash
+        run: npm run dev -- --host 127.0.0.1 --port 8088 > ../vite.log 2>&1 &
+      - name: Run approved browser workflow
+        working-directory: web_app
+        env:
+          FRAME_EDIT_E2E_BASE_URL: http://127.0.0.1:8088
+        run: npx playwright test tests/frame-editing.spec.mjs --config playwright.config.mjs

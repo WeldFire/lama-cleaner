@@ -322,4 +322,6 @@ def test_project_round_trip_reuses_canonical_pixels_and_rejects_corrupt_input(tm
     )
     assert corrupt.status_code == 422
     assert corrupt.json()["detail"] == "Unable to build an exact frame index for this video."
-    assert [project["name"] for project in client.get("/api/v1/projects").json()] == ["Real media"]
+    # Exact-frame browsing alone remains a disposable draft; only authored
+    # Frame Edit work promotes an Editing Project into the durable selector.
+    assert client.get("/api/v1/projects").json() == []

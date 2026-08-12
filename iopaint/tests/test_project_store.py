@@ -622,6 +622,29 @@ def test_restart_quarantines_hash_invalid_referenced_asset(tmp_path):
     recovered.close(reopened)
 
 
+def test_restart_keeps_missing_source_available_for_relink(tmp_path):
+    store = ProjectStore(tmp_path)
+    handle = store.open(name="Relinkable")
+    store.transact(handle, ProjectMutation(
+        "register_source",
+        {"id": "source-1", "filename": "clip.webm", "fingerprint": "fingerprint"},
+        {"source": b"video"},
+    ))
+    store.transact(handle, ProjectMutation(
+        "save_frame_edit", {"id": "edit-1", "ordinal": 0, "document": {}}, {"render": b"render"},
+    ))
+    project_id = handle.project_id
+    source_hash = store.project_snapshot(handle)["source"]["asset_hash"]
+    store.asset_path(handle, source_hash).unlink()
+    store.close(handle)
+
+    recovered = ProjectStore(tmp_path)
+    assert recovered.lifecycle(None, "list")[0]["id"] == project_id
+    reopened = recovered.open(project_id, "read")
+    assert recovered.project_snapshot(reopened)["frame_edits"][0]["id"] == "edit-1"
+    recovered.close(reopened)
+
+
 def test_restart_quarantines_corrupt_sqlite_without_blocking_healthy_projects(tmp_path):
     store = ProjectStore(tmp_path)
     broken = store.open(name="Broken")

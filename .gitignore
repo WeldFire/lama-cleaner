@@ -11,3 +11,6 @@ venv/
 tmp/
 iopaint/web_app/
 .env
+# Local qualification output is disposable and must not enter the issue tracker.
+.scratch/playwright-results/
+.scratch/pytest-ticket*/
