@@ -6,12 +6,13 @@ import json
 import subprocess
 import tempfile
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from iopaint.frame_media import FrameMediaError, build_frame_table, extract_canonical_png, source_fingerprint
+from iopaint.frame_media import FrameMediaError, build_frame_table, extract_canonical_png, legacy_source_fingerprint, source_fingerprint
 from iopaint.project_store import ProjectMutation, ProjectStore
 from iopaint.video import MAX_VIDEO_BYTES, SUPPORTED_VIDEO_EXTENSIONS
 
@@ -26,6 +27,7 @@ class FrameEditApi:
         self.router.add_api_route("/{project_id}", self.rename_project, methods=["PATCH"])
         self.router.add_api_route("/{project_id}", self.delete_project, methods=["DELETE"])
         self.router.add_api_route("/{project_id}/source", self.project_source, methods=["GET"])
+        self.router.add_api_route("/{project_id}/source/relink", self.relink_project_source, methods=["PUT"])
         self.router.add_api_route("/{project_id}/session", self.save_session, methods=["PUT"])
         self.router.add_api_route("/{project_id}/frames", self.list_frames, methods=["GET"])
         self.router.add_api_route("/{project_id}/frames/{ordinal}/image", self.frame_image, methods=["GET"])
@@ -52,16 +54,19 @@ class FrameEditApi:
             raise HTTPException(status_code=400, detail="Choose a non-empty video no larger than 2 GB.")
         handle = self.store.open(name=name)
         try:
-            fingerprint = source_fingerprint(data)
+            provisional_fingerprint = source_fingerprint(data)
             source_id = str(uuid.uuid4())
             self.store.transact(handle, ProjectMutation(
                 "register_source",
-                {"id": source_id, "filename": Path(file.filename or f"source{suffix}").name, "fingerprint": fingerprint},
+                {"id": source_id, "filename": Path(file.filename or f"source{suffix}").name, "fingerprint": provisional_fingerprint},
                 {"source": data},
             ))
             snapshot = self.store.project_snapshot(handle)
             source_path = self.store.asset_path(handle, snapshot["source"]["asset_hash"])
-            metadata, frames = build_frame_table(source_path, fingerprint)
+            metadata, frames = build_frame_table(source_path, provisional_fingerprint)
+            fingerprint = source_fingerprint(data, metadata)
+            for frame in frames:
+                frame["source_fingerprint"] = fingerprint
             # Store probe metadata on the source and then the complete frame table.
             self.store.transact(handle, ProjectMutation(
                 "register_source",
@@ -111,13 +116,69 @@ class FrameEditApi:
             source = self.store.project_snapshot(handle)["source"]
             if source is None:
                 raise HTTPException(status_code=404, detail="Project source not found")
+            source_path = self.store.asset_path(handle, source["asset_hash"])
+            if not source_path.exists():
+                raise HTTPException(status_code=409, detail={"code": "source_relink_required", "message": "Trim Input is missing. Choose the original video or an identical copy to relink it."})
             suffix = Path(source["filename"]).suffix.lower()
             media_types = {".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm"}
             return FileResponse(
-                self.store.asset_path(handle, source["asset_hash"]),
+                source_path,
                 media_type=media_types.get(suffix, "application/octet-stream"),
                 filename=source["filename"],
             )
+        finally:
+            self.store.close(handle)
+
+    def relink_project_source(self, project_id: str, file: UploadFile = File(...)):
+        """Restore a missing source only when the candidate has the exact stored fingerprint."""
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix not in SUPPORTED_VIDEO_EXTENSIONS:
+            raise HTTPException(status_code=400, detail="Choose an MP4, MOV, or WebM video.")
+        data = file.file.read(MAX_VIDEO_BYTES + 1)
+        if not data or len(data) > MAX_VIDEO_BYTES:
+            raise HTTPException(status_code=400, detail="Choose a non-empty video no larger than 2 GB.")
+        handle = self._open(project_id, "write")
+        try:
+            snapshot = self.store.project_snapshot(handle)
+            source = snapshot["source"]
+            if source is None:
+                raise HTTPException(status_code=409, detail="This project has no Source Fingerprint to relink against.")
+            try:
+                with tempfile.TemporaryDirectory(prefix="iopaint-relink-") as directory:
+                    candidate_path = Path(directory) / (Path(file.filename or "candidate.mp4").name)
+                    candidate_path.write_bytes(data)
+                    candidate_metadata, _ = build_frame_table(candidate_path, source_fingerprint(data))
+            except (FrameMediaError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                raise HTTPException(status_code=422, detail="Unable to inspect this relink candidate.") from error
+            candidate_fingerprint = source_fingerprint(data, candidate_metadata)
+            stored_fingerprint = source["fingerprint"]
+            fingerprint_matches = candidate_fingerprint == stored_fingerprint
+            if stored_fingerprint.startswith("sha256:"):
+                fingerprint_matches = legacy_source_fingerprint(data) == stored_fingerprint
+            if not fingerprint_matches:
+                self.store.transact(handle, ProjectMutation("record_relink_attempt", {"attempt": {
+                    "at": datetime.now(timezone.utc).isoformat(),
+                    "filename": Path(file.filename or "candidate").name,
+                    "candidate_fingerprint": candidate_fingerprint,
+                    "result": "quarantined-mismatch",
+                }}))
+                raise HTTPException(status_code=409, detail="This video does not match the project's Source Fingerprint. Existing edits remain quarantined and unchanged.")
+            metadata = dict(source["metadata"])
+            history = list(metadata.get("relink_history", []))
+            history.append({"at": datetime.now(timezone.utc).isoformat(), "filename": Path(file.filename or source["filename"]).name, "fingerprint": candidate_fingerprint})
+            metadata["relink_history"] = history
+            frames = snapshot["frames"]
+            for frame in frames:
+                frame["source_fingerprint"] = candidate_fingerprint
+            self.store.transact(handle, ProjectMutation(
+                "relink_source",
+                {"id": source["id"], "filename": Path(file.filename or source["filename"]).name, "fingerprint": candidate_fingerprint, "metadata": metadata, "relink_attempt": {
+                    "at": history[-1]["at"], "filename": history[-1]["filename"],
+                    "candidate_fingerprint": candidate_fingerprint, "result": "relinked",
+                }, "frames": frames},
+                {"source": data},
+            ))
+            return self.store.project_snapshot(handle)
         finally:
             self.store.close(handle)
 

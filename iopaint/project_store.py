@@ -272,6 +272,25 @@ class ProjectStore:
                 "INSERT OR REPLACE INTO sources(id,filename,fingerprint,asset_hash,metadata_json) VALUES(?,?,?,?,?)",
                 (payload["id"], payload["filename"], payload["fingerprint"], assets["source"], json.dumps(payload.get("metadata", {}), sort_keys=True)),
             )
+            if payload.get("relink_attempt"):
+                current = connection.execute("SELECT value FROM metadata WHERE key='relink_history'").fetchone()
+                history = json.loads(current[0]) if current else []
+                history.append(payload["relink_attempt"])
+                connection.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES('relink_history',?)", (json.dumps(history, sort_keys=True),))
+        elif kind == "relink_source":
+            connection.execute(
+                "INSERT OR REPLACE INTO sources(id,filename,fingerprint,asset_hash,metadata_json) VALUES(?,?,?,?,?)",
+                (payload["id"], payload["filename"], payload["fingerprint"], assets["source"], json.dumps(payload["metadata"], sort_keys=True)),
+            )
+            connection.execute("DELETE FROM frames")
+            connection.executemany(
+                "INSERT INTO frames(ordinal,frame_key_json,png_hash) VALUES(?,?,?)",
+                ((frame["presentation_ordinal"], json.dumps({key: value for key, value in frame.items() if key != "png_hash"}, sort_keys=True), frame.get("png_hash")) for frame in payload["frames"]),
+            )
+            current = connection.execute("SELECT value FROM metadata WHERE key='relink_history'").fetchone()
+            attempts = json.loads(current[0]) if current else []
+            attempts.append(payload["relink_attempt"])
+            connection.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES('relink_history',?)", (json.dumps(attempts, sort_keys=True),))
         elif kind == "replace_frames":
             connection.execute("DELETE FROM frames")
             connection.executemany(
@@ -302,6 +321,14 @@ class ProjectStore:
             connection.execute(
                 "INSERT OR REPLACE INTO metadata(key,value) VALUES('session_state',?)",
                 (json.dumps(session_state, sort_keys=True),),
+            )
+        elif kind == "record_relink_attempt":
+            current = connection.execute("SELECT value FROM metadata WHERE key='relink_history'").fetchone()
+            history = json.loads(current[0]) if current else []
+            history.append(payload["attempt"])
+            connection.execute(
+                "INSERT OR REPLACE INTO metadata(key,value) VALUES('relink_history',?)",
+                (json.dumps(history, sort_keys=True),),
             )
         elif kind == "rename_project":
             # The display name is catalog metadata. The transaction still
@@ -349,6 +376,7 @@ class ProjectStore:
         edits = handle.connection.execute("SELECT * FROM frame_edits WHERE deleted_at IS NULL ORDER BY ordinal").fetchall()
         session_row = handle.connection.execute("SELECT value FROM metadata WHERE key='session_state'").fetchone()
         activation_row = handle.connection.execute("SELECT value FROM metadata WHERE key='activated_at'").fetchone()
+        relink_row = handle.connection.execute("SELECT value FROM metadata WHERE key='relink_history'").fetchone()
         with sqlite3.connect(self._catalog) as catalog:
             catalog_row = catalog.execute("SELECT name,activated_at FROM projects WHERE id=?", (handle.project_id,)).fetchone()
         return {
@@ -360,4 +388,5 @@ class ProjectStore:
             "frames": [{**json.loads(row["frame_key_json"]), "png_hash": row["png_hash"]} for row in frames],
             "frame_edits": [{**dict(row), "document": json.loads(row["document_json"])} for row in edits],
             "session_state": None if session_row is None else json.loads(session_row["value"]),
+            "relink_history": [] if relink_row is None else json.loads(relink_row["value"]),
         }

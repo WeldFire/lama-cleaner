@@ -18,6 +18,8 @@ import {
   getProjectSource,
   getVideoProject,
   listVideoProjects,
+  ProjectRequestError,
+  relinkProjectSource,
   renameVideoProject,
   type VideoProject,
   type VideoProjectSummary,
@@ -148,6 +150,7 @@ function Home() {
   const [projectDeleteCandidate, setProjectDeleteCandidate] = useState<VideoProjectSummary | null>(null)
   const [projectRenameId, setProjectRenameId] = useState<string | null>(null)
   const [projectRenameName, setProjectRenameName] = useState("")
+  const [relinkProject, setRelinkProject] = useState<VideoProjectSummary | null>(null)
 
   useEffect(() => {
     if (file && isVideoFile(file)) setVideoProjectSource((current) =>
@@ -169,9 +172,12 @@ function Home() {
       localStorage.setItem(ACTIVE_VIDEO_PROJECT_KEY, projectId)
     } catch (reason) {
       localStorage.removeItem(ACTIVE_VIDEO_PROJECT_KEY)
+      if (reason instanceof ProjectRequestError && reason.code === "source_relink_required") {
+        setRelinkProject(recentVideoProjects.find((project) => project.id === projectId) ?? { id: projectId, name: "Video project", updatedAt: "" })
+      }
       setProjectRestoreError(reason instanceof Error ? reason.message : "Unable to restore video project")
     }
-  }, [setFile])
+  }, [recentVideoProjects, setFile])
 
   useEffect(() => {
     refreshRecentProjects()
@@ -384,6 +390,38 @@ function Home() {
             ))}
           </div>
           {projectRestoreError && <p className="mt-2 text-xs text-destructive">{projectRestoreError}</p>}
+          {relinkProject && (
+            <div className="mt-3 rounded border border-amber-500/50 bg-amber-500/10 p-3">
+              <p className="text-sm font-medium">Relink {relinkProject.name}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Choose the original Trim Input or an identical moved copy. A different video will be rejected and all frame-based work will remain quarantined.</p>
+              <div className="mt-2 flex gap-2">
+                <label className="cursor-pointer rounded border bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent">
+                  Choose Trim Input
+                  <input
+                    accept="video/mp4,video/quicktime,video/webm"
+                    className="sr-only"
+                    onChange={async (event) => {
+                      const input = event.currentTarget
+                      const candidate = input.files?.[0]
+                      if (!candidate) return
+                      try {
+                        await relinkProjectSource(relinkProject.id, candidate)
+                        setRelinkProject(null)
+                        setProjectRestoreError("")
+                        await resumeVideoProject(relinkProject.id)
+                      } catch (reason) {
+                        setProjectRestoreError(reason instanceof Error ? reason.message : "Unable to relink this Trim Input")
+                      } finally {
+                        input.value = ""
+                      }
+                    }}
+                    type="file"
+                  />
+                </label>
+                <button className="rounded border px-3 py-1.5 text-xs" onClick={() => setRelinkProject(null)} type="button">Cancel</button>
+              </div>
+            </div>
+          )}
         </section>
       )}
       <AlertDialog open={Boolean(projectDeleteCandidate)} onOpenChange={(open) => !open && setProjectDeleteCandidate(null)}>

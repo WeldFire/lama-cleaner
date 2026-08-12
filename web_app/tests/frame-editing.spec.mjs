@@ -75,6 +75,8 @@ function newBackendState() {
     trimRequests: [],
     frameImageOrdinals: [],
     maskRequests: 0,
+    sourceMissing: false,
+    relinkHistory: [],
   }
 }
 
@@ -140,12 +142,20 @@ async function installMockBackend(page, state) {
       return json(route, { project_id: "project-1", deleted: true })
     }
     if (path === "/projects/project-1/source") {
+      if (state.sourceMissing) return json(route, { detail: { code: "source_relink_required", message: "Trim Input is missing. Choose the original video or an identical copy to relink it." } }, 409)
       return route.fulfill({
         status: 200,
         contentType: "video/webm",
         headers: { "Content-Disposition": 'attachment; filename="phase1.webm"' },
         body: videoBytes,
       })
+    }
+    if (path === "/projects/project-1/source/relink" && method === "PUT") {
+      const multipart = request.postDataBuffer()?.toString("latin1") || ""
+      if (!multipart.includes("phase1.webm")) return json(route, { detail: "This video does not match the project's Source Fingerprint. Existing edits remain quarantined and unchanged." }, 409)
+      state.sourceMissing = false
+      state.relinkHistory.push("phase1.webm")
+      return json(route, rawProject(state))
     }
     if (path === "/projects/project-1/session" && method === "PUT") {
       state.session = request.postDataJSON()
@@ -304,6 +314,25 @@ test("an unedited clip is discarded instead of becoming a recent project", async
 
   await expect(page.getByLabel("Recent video projects")).toBeHidden()
   expect(state.deleted).toBe(true)
+})
+
+test("a missing Trim Input relinks only an identical candidate", async ({ page }) => {
+  const state = newBackendState()
+  state.project = { name: "Moved source project" }
+  state.durable = true
+  state.sourceMissing = true
+  await installMockBackend(page, state)
+  await page.goto("/", { waitUntil: "domcontentloaded" })
+  await page.getByRole("button", { name: /Moved source project.*Continue/ }).click()
+  await expect(page.getByText("Relink Moved source project")).toBeVisible()
+
+  await page.getByLabel("Choose Trim Input").setInputFiles({ name: "wrong.webm", mimeType: "video/webm", buffer: Buffer.from("wrong") })
+  await expect(page.getByText(/does not match.*Source Fingerprint/)).toBeVisible()
+  expect(state.sourceMissing).toBe(true)
+
+  await page.getByLabel("Choose Trim Input").setInputFiles({ name: "phase1.webm", mimeType: "video/webm", buffer: videoBytes })
+  await expect(page.getByRole("button", { name: "Moved source project", exact: true })).toBeVisible()
+  expect(state.relinkHistory).toEqual(["phase1.webm"])
 })
 
 test("trim, exact-frame, frame-edit, guard, marker, tray, and downloads round trip", async ({ page }) => {

@@ -73,7 +73,7 @@ Dependency graph:
 - [Qualify exact frames against a real-media fixture corpus](issues/21-qualify-real-media-exact-frame-corpus.md) — Resolved: deterministic real media proves exact rational timing, stable decoded pixels, display geometry, color metadata/tone-map routing, and actionable corruption handling.
 - [Automate the Phase 1 browser workflow](issues/22-automate-phase1-browser-workflow.md) — Resolved: three isolated Playwright scenarios qualify browser interactions, while a gated real-Docker scenario proves persisted project/Frame Edit recovery across an application restart.
 - [Persist resumable Frame Edit documents](issues/23-persist-resumable-frame-edit-documents.md) — Resolved: atomic versioned documents retain canonical identity, composite masks, geometry, tools, operation snapshots, and snapshot-safe autosave across reopen/restart.
-- [Relink moved sources and quarantine mismatches](issues/24-relink-sources-and-quarantine-mismatches.md) — Ready: recover moved sources by fingerprint without attaching work to mismatches.
+- [Relink moved sources and quarantine mismatches](issues/24-relink-sources-and-quarantine-mismatches.md) — Resolved: typed relink recovery uses layered fingerprints, audits matches/mismatches, preserves project work, and atomically upgrades legacy identities.
 - [Fault-test atomic project commits](issues/25-fault-test-atomic-project-commits.md) — Ready: prove failure boundaries retain a complete prior or new revision.
 - [Qualify migrations, read-only recovery, and writer leases](issues/26-qualify-migrations-recovery-and-writer-leases.md) — Blocked by 25.
 - [Qualify native and Docker project workflows](issues/27-qualify-native-and-docker-project-workflows.md) — Blocked by 21–26.

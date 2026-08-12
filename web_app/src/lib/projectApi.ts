@@ -25,6 +25,12 @@ export type VideoProjectSummary = {
 
 type JsonObject = Record<string, unknown>
 
+export class ProjectRequestError extends Error {
+  constructor(message: string, readonly status: number, readonly code?: string) {
+    super(message)
+  }
+}
+
 const record = (value: unknown): JsonObject =>
   value !== null && typeof value === "object" ? (value as JsonObject) : {}
 
@@ -133,7 +139,7 @@ async function requireJson(response: Response) {
     } catch {
       // Non-JSON responses already contain the most useful server message.
     }
-    throw new Error(message || `Project request failed (${response.status})`)
+    throw new ProjectRequestError(message || `Project request failed (${response.status})`, response.status)
   }
   return response.json()
 }
@@ -162,10 +168,29 @@ export async function listVideoProjects(): Promise<VideoProjectSummary[]> {
 
 export async function getProjectSource(projectId: string, sourceName = "video"): Promise<File> {
   const response = await fetch(`${API_ENDPOINT}/projects/${projectId}/source`)
-  if (!response.ok) throw new Error(await response.text() || "Unable to restore the project source")
+  if (!response.ok) {
+    const body = await response.text()
+    let message = body
+    let code: string | undefined
+    try {
+      const detail = record(record(JSON.parse(body)).detail)
+      message = stringValue(detail.message, body)
+      code = stringValue(detail.code) || undefined
+    } catch { /* Plain text is already actionable. */ }
+    throw new ProjectRequestError(message || "Unable to restore the project source", response.status, code)
+  }
   return new File([await response.blob()], sourceName, {
     type: response.headers.get("content-type") || "video/mp4",
   })
+}
+
+export async function relinkProjectSource(projectId: string, file: File): Promise<VideoProject> {
+  const body = new FormData()
+  body.append("file", file, file.name)
+  return normalizeProject(await requireJson(await fetch(`${API_ENDPOINT}/projects/${projectId}/source/relink`, {
+    method: "PUT",
+    body,
+  })))
 }
 
 export async function saveProjectSession(projectId: string, session: ProjectSessionState) {

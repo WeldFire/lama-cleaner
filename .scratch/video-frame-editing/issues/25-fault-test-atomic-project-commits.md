@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Provide deterministic fault-injection seams around each asset write, metadata transaction, manifest replacement, and cleanup boundary.
 - [ ] A failure at every boundary leaves either the complete prior revision or the complete new revision.

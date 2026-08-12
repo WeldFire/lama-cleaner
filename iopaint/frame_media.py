@@ -18,7 +18,36 @@ class FrameMediaError(ValueError):
     pass
 
 
-def source_fingerprint(data: bytes) -> str:
+def source_fingerprint(data: bytes, metadata: dict[str, Any] | None = None) -> str:
+    """Return a layered, portable identity for a Trim Input.
+
+    Sample hashes make comparison cheap to explain, normalized stream properties
+    reject structurally different media, and the full hash resolves collisions or
+    ambiguity before timestamp-dependent work is attached.
+    """
+    sample_size = min(64 * 1024, len(data))
+    middle = max(0, (len(data) - sample_size) // 2)
+    normalized = {
+        key: metadata.get(key)
+        for key in ("width", "height", "time_base", "video_stream_index", "sample_aspect_ratio", "color_space", "color_transfer", "color_primaries")
+        if metadata and key in metadata
+    }
+    payload = {
+        "version": 2,
+        "size": len(data),
+        "media": normalized,
+        "samples": [
+            hashlib.sha256(data[:sample_size]).hexdigest(),
+            hashlib.sha256(data[middle:middle + sample_size]).hexdigest(),
+            hashlib.sha256(data[-sample_size:]).hexdigest(),
+        ],
+        "full_sha256": hashlib.sha256(data).hexdigest(),
+    }
+    return "source-v2:" + json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def legacy_source_fingerprint(data: bytes) -> str:
+    """Compute the v1 identity so existing projects can be safely migrated."""
     return f"sha256:{hashlib.sha256(data).hexdigest()}:size:{len(data)}"
 
 

@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from iopaint.frame_edit_api import FrameEditApi
+from iopaint.frame_media import legacy_source_fingerprint
 from iopaint.project_store import ProjectStore
 
 
@@ -123,13 +124,59 @@ def test_project_frame_and_frame_edit_endpoints(tmp_path, monkeypatch):
     )
     assert stale_revision.status_code == 409
     assert client.get(f"/api/v1/projects/{project_id}/frame-edits/{edit_id}/image").content == b"updated png"
-    assert client.delete(f"/api/v1/projects/{project_id}/frame-edits/{edit_id}").json()["deleted"] is True
-    assert client.get(f"/api/v1/projects/{project_id}/frame-edits").json() == []
-
     source = client.get(f"/api/v1/projects/{project_id}/source")
     assert source.status_code == 200
     assert source.content == b"fake video"
     assert 'filename="clip.mp4"' in source.headers["content-disposition"]
+
+    # Simulate a moved/deleted project-owned Trim Input while retaining all
+    # timestamp-dependent project metadata and edits.
+    handle = store.open(project_id, "read")
+    source_asset = store.asset_path(handle, store.project_snapshot(handle)["source"]["asset_hash"])
+    store.close(handle)
+    source_asset.unlink()
+    # Model a project created before layered Source Fingerprints shipped.
+    legacy_fingerprint = legacy_source_fingerprint(b"fake video")
+    handle = store.open(project_id, "write")
+    handle.connection.execute("UPDATE sources SET fingerprint=?", (legacy_fingerprint,))
+    row = handle.connection.execute("SELECT frame_key_json FROM frames WHERE ordinal=0").fetchone()
+    legacy_frame = json.loads(row[0])
+    legacy_frame["source_fingerprint"] = legacy_fingerprint
+    handle.connection.execute("UPDATE frames SET frame_key_json=? WHERE ordinal=0", (json.dumps(legacy_frame),))
+    handle.connection.commit()
+    store.close(handle)
+    missing = client.get(f"/api/v1/projects/{project_id}/source")
+    assert missing.status_code == 409
+    assert missing.json()["detail"]["code"] == "source_relink_required"
+
+    preserved_session = {"current_ordinal": 0, "trim_start_ordinal": 0, "trim_end_ordinal": 0}
+    assert client.put(f"/api/v1/projects/{project_id}/session", json=preserved_session).status_code == 200
+
+    mismatch = client.put(
+        f"/api/v1/projects/{project_id}/source/relink",
+        files={"file": ("wrong.mp4", b"different video", "video/mp4")},
+    )
+    assert mismatch.status_code == 409
+    assert "quarantined" in mismatch.json()["detail"]
+    assert not source_asset.exists()
+    assert client.get(f"/api/v1/projects/{project_id}").json()["relink_history"][-1]["result"] == "quarantined-mismatch"
+
+    relinked = client.put(
+        f"/api/v1/projects/{project_id}/source/relink",
+        files={"file": ("moved-copy.mp4", b"fake video", "video/mp4")},
+    )
+    assert relinked.status_code == 200
+    assert relinked.json()["source"]["filename"] == "moved-copy.mp4"
+    assert relinked.json()["source"]["metadata"]["relink_history"][-1]["filename"] == "moved-copy.mp4"
+    assert relinked.json()["relink_history"][-1]["result"] == "relinked"
+    assert relinked.json()["frames"][0]["pts_ticks"] == "0"
+    assert relinked.json()["source"]["fingerprint"].startswith("source-v2:")
+    assert relinked.json()["frames"][0]["source_fingerprint"] == relinked.json()["source"]["fingerprint"]
+    assert relinked.json()["frame_edits"][0]["id"] == edit_id
+    assert relinked.json()["session_state"] == preserved_session
+    assert client.get(f"/api/v1/projects/{project_id}/source").content == b"fake video"
+    assert client.delete(f"/api/v1/projects/{project_id}/frame-edits/{edit_id}").json()["deleted"] is True
+    assert client.get(f"/api/v1/projects/{project_id}/frame-edits").json() == []
 
     saved_session = client.put(
         f"/api/v1/projects/{project_id}/session",
