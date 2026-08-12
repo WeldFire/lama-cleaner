@@ -4,7 +4,7 @@
 
 **Blocked by:** 20 — Restore the full Python test baseline; 21 — Qualify exact frames against a real-media fixture corpus; 22 — Automate the Phase 1 browser workflow; 23 — Persist resumable Frame Edit documents; 24 — Relink moved sources and quarantine mismatches; 25 — Fault-test atomic project commits; 26 — Qualify migrations, read-only recovery, and writer leases; 27 — Qualify native and Docker project workflows.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Record exact commands, runtime and dependency versions, platforms, Docker configuration, media-fixture identities, and test results.
 - [ ] Link automated evidence for every Phase 1 acceptance criterion and identify any remaining limitation or waiver.
