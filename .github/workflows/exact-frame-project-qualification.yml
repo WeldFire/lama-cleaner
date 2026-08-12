@@ -28,6 +28,10 @@ on:
       - "web_app/tests/**"
       - "web_app/package*.json"
 
+concurrency:
+  group: exact-frame-project-qualification-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   native-project-workflow:
     strategy:
