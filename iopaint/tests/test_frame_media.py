@@ -125,3 +125,16 @@ def test_extract_tonemaps_hdr_into_the_canonical_editing_space(tmp_path):
     assert "zscale=t=linear" in video_filter
     assert "tonemap=tonemap=hable" in video_filter
     assert "zscale=p=bt709:t=bt709:m=bt709" in video_filter
+
+
+def test_extract_translates_ffmpeg_failure_with_stderr(tmp_path):
+    def run(command, **kwargs):
+        raise subprocess.CalledProcessError(8, command, stderr="No such filter: zscale")
+
+    with pytest.raises(FrameMediaError, match="No such filter: zscale"):
+        extract_canonical_png(
+            tmp_path / "hdr.mov",
+            {"decode_ordinal": 0, "video_stream_index": 0, "source_color_transfer": "smpte2084"},
+            tmp_path / "hdr.png",
+            run=run,
+        )

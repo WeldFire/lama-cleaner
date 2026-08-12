@@ -95,6 +95,14 @@ def make_rotated_mirrored(tmp_path: Path) -> Path:
         "-f", "lavfi", "-i", "testsrc2=size=32x24:rate=4:duration=1",
         "-vf", "hflip", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
     )
+    help_text = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-h", "full"], capture_output=True, text=True, timeout=30,
+    ).stdout
+    if "display_rotation" in help_text:
+        return ffmpeg(
+            tmp_path / "rotated-mirrored.mov",
+            "-display_rotation", "90", "-i", str(encoded), "-c", "copy",
+        )
     return ffmpeg(
         tmp_path / "rotated-mirrored.mov",
         "-i", str(encoded), "-c", "copy", "-metadata:s:v:0", "rotate=90",

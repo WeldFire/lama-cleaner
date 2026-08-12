@@ -159,6 +159,13 @@ def extract_canonical_png(source: Path, frame: dict[str, Any], destination: Path
         "ffmpeg", "-v", "error", "-i", str(source), "-map", f"0:{frame['video_stream_index']}",
         "-vf", select, "-vsync", "0", "-frames:v", "1", "-f", "image2", "-c:v", "png", "-y", str(destination),
     ]
-    run(command, check=True, timeout=600)
+    try:
+        run(command, check=True, capture_output=True, text=True, timeout=600)
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or error.stdout or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise FrameMediaError(f"Canonical frame extraction failed{suffix}") from error
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise FrameMediaError(f"Canonical frame extraction failed: {error}") from error
     if not destination.is_file() or destination.stat().st_size == 0:
         raise FrameMediaError("Canonical frame extraction produced no image")
