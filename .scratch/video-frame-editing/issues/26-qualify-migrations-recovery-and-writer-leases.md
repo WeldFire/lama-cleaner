@@ -4,7 +4,7 @@
 
 **Blocked by:** 25 — Fault-test atomic project commits.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Older supported schemas migrate transactionally with a recoverable backup and pass the post-migration integrity audit.
 - [ ] Newer unsupported schemas open read-only with an actionable explanation and without mutating project data.

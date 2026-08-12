@@ -13,10 +13,11 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 
 SCHEMA_VERSION = 1
+ORPHAN_GRACE_SECONDS = 24 * 60 * 60
 
 
 def default_project_data_dir() -> Path:
@@ -53,13 +54,14 @@ class ProjectMutation:
 class ProjectStore:
     """Own project SQLite, immutable assets, revisions, and lifecycle state."""
 
-    def __init__(self, root: Path | None = None):
+    def __init__(self, root: Path | None = None, fault_hook: Callable[[str], None] | None = None):
         self.root = (root or default_project_data_dir()).resolve()
         self.projects_dir = self.root / "projects"
         self.projects_dir.mkdir(parents=True, exist_ok=True)
         self._catalog = self.root / "catalog.sqlite"
         self._project_locks: dict[str, threading.RLock] = {}
         self._project_locks_guard = threading.Lock()
+        self._fault_hook = fault_hook or (lambda boundary: None)
         with sqlite3.connect(self._catalog) as connection:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute(
@@ -71,6 +73,8 @@ class ProjectStore:
             if "activated_at" not in columns:
                 connection.execute("ALTER TABLE projects ADD COLUMN activated_at TEXT")
                 connection.execute("UPDATE projects SET activated_at=created_at WHERE activated_at IS NULL")
+            if "recovery_error" not in columns:
+                connection.execute("ALTER TABLE projects ADD COLUMN recovery_error TEXT")
             draft_candidates = [row[0] for row in connection.execute(
                 "SELECT id FROM projects WHERE activated_at IS NULL"
             ).fetchall()]
@@ -98,6 +102,8 @@ class ProjectStore:
             # Drafts are disposable preparation state. A backend restart is a
             # hard session boundary, so remove their source assets as well.
             shutil.rmtree(self.projects_dir / project_id, ignore_errors=True)
+        self._adopt_uncataloged_projects()
+        self._recover_projects()
 
     def open(
         self,
@@ -124,6 +130,13 @@ class ProjectStore:
             (project_path / child).mkdir(exist_ok=True)
         connection = sqlite3.connect(project_path / "project.sqlite")
         connection.row_factory = sqlite3.Row
+        if creating:
+            try:
+                self._fault_hook("creation:metadata:before")
+            except Exception:
+                connection.close()
+                shutil.rmtree(project_path)
+                raise
         self._initialize(connection, project_id)
         token = int(connection.execute("SELECT value FROM metadata WHERE key='fencing_token'").fetchone()[0])
         if access_intent != "read":
@@ -131,13 +144,31 @@ class ProjectStore:
             connection.execute("UPDATE metadata SET value=? WHERE key='fencing_token'", (str(token),))
             connection.commit()
         if creating:
+            try:
+                self._fault_hook("creation:metadata:after")
+            except Exception:
+                connection.close()
+                shutil.rmtree(project_path)
+                raise
+        if creating:
             now = _now()
-            with sqlite3.connect(self._catalog) as catalog:
-                catalog.execute(
-                    "INSERT INTO projects(id,name,created_at,updated_at,activated_at) VALUES(?,?,?,?,NULL)",
-                    (project_id, name, now, now),
-                )
-            self._write_manifest(project_path, project_id, name, 0)
+            connection.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES('project_name',?)", (name,))
+            connection.commit()
+            try:
+                self._fault_hook("creation:catalog:before")
+                with sqlite3.connect(self._catalog) as catalog:
+                    catalog.execute(
+                        "INSERT INTO projects(id,name,created_at,updated_at,activated_at) VALUES(?,?,?,?,NULL)",
+                        (project_id, name, now, now),
+                    )
+                self._fault_hook("creation:catalog:after")
+                self._write_manifest(project_path, project_id, name, 0)
+            except Exception:
+                connection.close()
+                with sqlite3.connect(self._catalog) as catalog:
+                    catalog.execute("DELETE FROM projects WHERE id=?", (project_id,))
+                shutil.rmtree(project_path)
+                raise
         return ProjectHandle(project_id, project_path, connection, token, access_intent == "read")
 
     def transact(self, handle: ProjectHandle, mutation: ProjectMutation) -> int:
@@ -148,13 +179,19 @@ class ProjectStore:
             current_token = int(connection.execute("SELECT value FROM metadata WHERE key='fencing_token'").fetchone()[0])
             if current_token != handle.fencing_token:
                 raise PermissionError("This writer has been fenced by a newer project session")
-            asset_hashes = {name: self._ingest_asset(handle.path, data) for name, data in (mutation.assets or {}).items()}
+            asset_hashes = {
+                name: self._ingest_asset(handle.path, data, name)
+                for name, data in (mutation.assets or {}).items()
+            }
             payload = dict(mutation.payload)
             payload["assets"] = asset_hashes
+            self._fault_hook("metadata:before")
             with connection:
                 revision = int(connection.execute("SELECT value FROM metadata WHERE key='revision'").fetchone()[0]) + 1
                 self._apply_mutation(connection, mutation.kind, payload)
                 connection.execute("UPDATE metadata SET value=? WHERE key='revision'", (str(revision),))
+            self._fault_hook("metadata:after")
+            self._fault_hook("catalog:before")
             with sqlite3.connect(self._catalog) as catalog:
                 if mutation.kind == "rename_project":
                     catalog.execute(
@@ -169,10 +206,17 @@ class ProjectStore:
                     )
                 catalog.execute("UPDATE projects SET updated_at=? WHERE id=?", (_now(), handle.project_id))
                 name = catalog.execute("SELECT name FROM projects WHERE id=?", (handle.project_id,)).fetchone()[0]
+            self._fault_hook("catalog:after")
             self._write_manifest(handle.path, handle.project_id, name, revision)
             return revision
 
     def lifecycle(self, project_id: str | None, command: str) -> Any:
+        if command == "recovery":
+            with sqlite3.connect(self._catalog) as connection:
+                connection.row_factory = sqlite3.Row
+                return [dict(row) for row in connection.execute(
+                    "SELECT id,name,recovery_error FROM projects WHERE recovery_error IS NOT NULL ORDER BY id"
+                )]
         if command == "discard-draft":
             if not project_id:
                 raise ValueError("Draft discard requires a project ID")
@@ -203,9 +247,21 @@ class ProjectStore:
                         )
                 rows = connection.execute(
                     "SELECT id,name,created_at,updated_at FROM projects "
-                    "WHERE deleted_at IS NULL AND activated_at IS NOT NULL ORDER BY updated_at DESC"
+                    "WHERE deleted_at IS NULL AND activated_at IS NOT NULL AND recovery_error IS NULL ORDER BY updated_at DESC"
                 ).fetchall()
-                return [dict(row) for row in rows]
+                visible = []
+                for row in rows:
+                    database = self.projects_dir / row["id"] / "project.sqlite"
+                    project = sqlite3.connect(database)
+                    try:
+                        integrity_error = project.execute(
+                            "SELECT value FROM metadata WHERE key='integrity_error'"
+                        ).fetchone()
+                    finally:
+                        project.close()
+                    if not integrity_error:
+                        visible.append(dict(row))
+                return visible
             if command not in {"trash", "restore"} or not project_id:
                 raise ValueError(f"Unsupported lifecycle command: {command}")
             row = connection.execute("SELECT activated_at FROM projects WHERE id=?", (project_id,)).fetchone()
@@ -219,6 +275,102 @@ class ProjectStore:
 
     def close(self, handle: ProjectHandle) -> None:
         handle.connection.close()
+
+    def _recover_projects(self) -> None:
+        """Audit durable project state and repair derived catalog/manifest files."""
+        for project_path in self.projects_dir.iterdir():
+            database = project_path / "project.sqlite"
+            if not project_path.is_dir() or not database.exists():
+                continue
+            try:
+                connection = sqlite3.connect(database)
+                connection.row_factory = sqlite3.Row
+                integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+                if integrity != "ok":
+                    raise sqlite3.DatabaseError(f"SQLite integrity check failed: {integrity}")
+                now = datetime.now(timezone.utc).timestamp()
+                for temporary in (project_path / "tmp").glob("*"):
+                    if now - temporary.stat().st_mtime >= ORPHAN_GRACE_SECONDS:
+                        try:
+                            self._fault_hook("cleanup:temporary")
+                            temporary.unlink(missing_ok=True)
+                        except OSError:
+                            # Cleanup is best effort; a locked orphan cannot make
+                            # an otherwise complete project unavailable.
+                            pass
+                metadata = {row["key"]: row["value"] for row in connection.execute("SELECT key,value FROM metadata")}
+                referenced = {
+                    row[0]
+                    for query in (
+                        "SELECT asset_hash FROM sources",
+                        "SELECT png_hash FROM frames WHERE png_hash IS NOT NULL",
+                        "SELECT render_hash FROM frame_edits WHERE render_hash IS NOT NULL",
+                        "SELECT mask_hash FROM frame_edits WHERE mask_hash IS NOT NULL",
+                    )
+                    for row in connection.execute(query)
+                }
+                invalid = []
+                for digest in referenced:
+                    asset = project_path / "assets" / digest[:2] / digest
+                    if not asset.exists() or hashlib.sha256(asset.read_bytes()).hexdigest() != digest:
+                        invalid.append(digest)
+                if invalid:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO metadata(key,value) VALUES('integrity_error',?)",
+                        (json.dumps({"invalid_assets": sorted(invalid)}),),
+                    )
+                    connection.commit()
+                    continue
+                connection.execute("DELETE FROM metadata WHERE key='integrity_error'")
+                connection.commit()
+                for asset in (project_path / "assets").glob("*/*"):
+                    if asset.is_file() and asset.name not in referenced and now - asset.stat().st_mtime >= ORPHAN_GRACE_SECONDS:
+                        try:
+                            self._fault_hook("cleanup:orphan-asset")
+                            asset.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                revision = int(metadata.get("revision", "0"))
+                with sqlite3.connect(self._catalog) as catalog:
+                    row = catalog.execute("SELECT name FROM projects WHERE id=?", (project_path.name,)).fetchone()
+                    name = metadata.get("project_name") or (row[0] if row else "Untitled video project")
+                    if row:
+                        catalog.execute(
+                            "UPDATE projects SET name=?,activated_at=COALESCE(activated_at,?),recovery_error=NULL WHERE id=?",
+                            (name, metadata.get("activated_at"), project_path.name),
+                        )
+                self._write_manifest(project_path, project_path.name, name, revision)
+            except (OSError, sqlite3.DatabaseError, ValueError) as error:
+                with sqlite3.connect(self._catalog) as catalog:
+                    catalog.execute("UPDATE projects SET recovery_error=? WHERE id=?", (str(error), project_path.name))
+            finally:
+                if "connection" in locals():
+                    connection.close()
+                    del connection
+
+    def _adopt_uncataloged_projects(self) -> None:
+        """Rebuild catalog rows from self-contained project directories."""
+        with sqlite3.connect(self._catalog) as catalog:
+            catalog_ids = {row[0] for row in catalog.execute("SELECT id FROM projects")}
+            for project_path in self.projects_dir.iterdir():
+                database = project_path / "project.sqlite"
+                if not project_path.is_dir() or project_path.name in catalog_ids or not database.exists():
+                    continue
+                try:
+                    project = sqlite3.connect(database)
+                    metadata = {row[0]: row[1] for row in project.execute("SELECT key,value FROM metadata")}
+                    project.close()
+                    if metadata.get("project_id") != project_path.name:
+                        continue
+                    now = _now()
+                    catalog.execute(
+                        "INSERT INTO projects(id,name,created_at,updated_at,activated_at,deleted_at,recovery_error) VALUES(?,?,?,?,?,NULL,NULL)",
+                        (project_path.name, metadata.get("project_name", "Recovered project"), now, now, metadata.get("activated_at")),
+                    )
+                except sqlite3.DatabaseError:
+                    # Unknown/corrupt directories are left untouched for manual
+                    # recovery; startup never destroys potentially authored data.
+                    continue
 
     def _project_lock(self, project_id: str) -> threading.RLock:
         with self._project_locks_guard:
@@ -334,43 +486,52 @@ class ProjectStore:
             # The display name is catalog metadata. The transaction still
             # advances the project revision so the manifest and catalog move
             # forward together under the writer's fencing token.
-            pass
+            connection.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES('project_name',?)", (payload["name"],))
         else:
             raise ValueError(f"Unsupported project mutation: {kind}")
 
-    @staticmethod
-    def _ingest_asset(project_path: Path, data: bytes) -> str:
+    def _ingest_asset(self, project_path: Path, data: bytes, asset_name: str) -> str:
         digest = hashlib.sha256(data).hexdigest()
         destination = project_path / "assets" / digest[:2] / digest
         if destination.exists():
+            if hashlib.sha256(destination.read_bytes()).hexdigest() != digest:
+                raise IOError(f"Existing {asset_name} asset failed hash verification")
             return digest
         destination.parent.mkdir(parents=True, exist_ok=True)
         temporary = project_path / "tmp" / f"{digest}.{uuid.uuid4().hex}.tmp"
+        self._fault_hook(f"asset:{asset_name}:before-write")
         with temporary.open("xb") as output:
             output.write(data)
             output.flush()
             os.fsync(output.fileno())
+        self._fault_hook(f"asset:{asset_name}:after-fsync")
         if hashlib.sha256(temporary.read_bytes()).hexdigest() != digest:
             temporary.unlink(missing_ok=True)
             raise IOError("Asset hash verification failed")
         os.replace(temporary, destination)
+        self._fault_hook(f"asset:{asset_name}:after-replace")
         return digest
 
-    @staticmethod
-    def _write_manifest(project_path: Path, project_id: str, name: str, revision: int) -> None:
+    def _write_manifest(self, project_path: Path, project_id: str, name: str, revision: int) -> None:
         payload = {"project_id": project_id, "name": name, "schema_version": SCHEMA_VERSION, "revision": revision}
         temporary = project_path / "tmp" / "manifest.json.tmp"
+        self._fault_hook("manifest:before-write")
         with temporary.open("w", encoding="utf-8") as output:
             json.dump(payload, output, sort_keys=True, indent=2)
             output.flush()
             os.fsync(output.fileno())
+        self._fault_hook("manifest:after-fsync")
         os.replace(temporary, project_path / "manifest.json")
+        self._fault_hook("manifest:after-replace")
 
     @staticmethod
     def asset_path(handle: ProjectHandle, digest: str) -> Path:
         return handle.path / "assets" / digest[:2] / digest
 
     def project_snapshot(self, handle: ProjectHandle) -> dict[str, Any]:
+        integrity_row = handle.connection.execute("SELECT value FROM metadata WHERE key='integrity_error'").fetchone()
+        if integrity_row:
+            raise IOError(f"Project integrity audit failed: {integrity_row['value']}")
         source = handle.connection.execute("SELECT * FROM sources LIMIT 1").fetchone()
         frames = handle.connection.execute("SELECT ordinal,frame_key_json,png_hash FROM frames ORDER BY ordinal").fetchall()
         edits = handle.connection.execute("SELECT * FROM frame_edits WHERE deleted_at IS NULL ORDER BY ordinal").fetchall()
