@@ -46,6 +46,13 @@ def probe(source: Path, entries: str) -> dict:
     return json.loads(result.stdout)
 
 
+def ffmpeg_has_filter(name: str) -> bool:
+    result = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True, timeout=30,
+    )
+    return any(line.split()[1:2] == [name] for line in result.stdout.splitlines())
+
+
 def make_cfr(tmp_path: Path) -> Path:
     return ffmpeg(
         tmp_path / "cfr-bframes.mp4",
@@ -182,6 +189,8 @@ def project_time(frame: dict) -> Fraction:
     ],
 )
 def test_supported_real_media_has_stable_frame_keys_and_pngs(tmp_path, factory):
+    if factory is make_hdr_tagged and not ffmpeg_has_filter("zscale"):
+        pytest.skip("HDR canonicalization unsupported: this FFmpeg build has no zscale filter")
     source = factory(tmp_path)
     fingerprint = source_fingerprint(source.read_bytes())
 
