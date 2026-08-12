@@ -74,6 +74,7 @@ function newBackendState() {
     frameEditPosts: 0,
     trimRequests: [],
     frameImageOrdinals: [],
+    maskRequests: 0,
   }
 }
 
@@ -92,6 +93,8 @@ function rawProject(state) {
       id: edit.id,
       frame_ordinal: edit.ordinal,
       render_hash: `render-${edit.id}`,
+      mask_hash: edit.maskHash,
+      document: edit.document,
       updated_at: edit.updatedAt,
     })),
     session_state: state.session,
@@ -158,15 +161,24 @@ async function installMockBackend(page, state) {
       const multipart = request.postDataBuffer()?.toString("utf8") || ""
       const ordinalMatch = multipart.match(/name="ordinal"\r?\n\r?\n(\d+)/)
       if (!ordinalMatch) throw new Error("Frame-edit upload omitted its canonical ordinal")
+      const documentMatch = multipart.match(/name="document"\r?\n\r?\n([^\r\n]+)/)
+      if (!documentMatch) throw new Error("Frame-edit upload omitted its editable document")
+      if (!multipart.includes('name="mask"')) throw new Error("Frame-edit upload omitted its editable mask")
       const ordinal = Number(ordinalMatch[1])
       const existing = state.frameEdits.find((edit) => edit.ordinal === ordinal)
       const edit = existing || { id: `edit-${state.nextEdit++}`, ordinal }
+      edit.document = JSON.parse(documentMatch[1])
+      edit.maskHash = `mask-${edit.id}`
       edit.updatedAt = new Date().toISOString()
       if (!existing) state.frameEdits.push(edit)
       return json(route, { id: edit.id, frame_ordinal: edit.ordinal, updated_at: edit.updatedAt })
     }
-    const editMatch = path.match(/^\/projects\/project-1\/frame-edits\/(edit-\d+)(\/image)?$/)
-    if (editMatch?.[2]) return route.fulfill({ status: 200, contentType: "image/png", body: pngBytes })
+    const editMatch = path.match(/^\/projects\/project-1\/frame-edits\/(edit-\d+)(\/(image|mask))?$/)
+    if (editMatch?.[3] === "image") return route.fulfill({ status: 200, contentType: "image/png", body: pngBytes })
+    if (editMatch?.[3] === "mask") {
+      state.maskRequests += 1
+      return route.fulfill({ status: 200, contentType: "image/png", body: pngBytes })
+    }
     if (editMatch && method === "DELETE") {
       state.frameEdits = state.frameEdits.filter((edit) => edit.id !== editMatch[1])
       return json(route, { id: editMatch[1], deleted: true })
@@ -245,7 +257,14 @@ test("project lifecycle survives reload and supports rename, selection, and conf
   await page.getByRole("button", { name: "Save project name" }).click()
   await expect(page.getByRole("button", { name: "Qualified project", exact: true })).toBeVisible()
   await page.getByRole("button", { name: "Edit frame" }).click()
-  await page.getByRole("button", { name: "Save & return" }).click()
+  await drawOnCurrentFrame(page)
+  await expect.poll(() => state.frameEditPosts).toBe(1)
+  expect(state.frameEdits[0].document.revision).toBe(1)
+  expect(state.frameEdits[0].document.frame_key).toEqual({ ordinal: 0, project_time_num: "0", project_time_den: "4" })
+  expect(state.frameEdits[0].document.canvas).toEqual({ width: 64, height: 48 })
+  expect(state.frameEdits[0].document.operation.kind).toBe("image-edit")
+  await expect(page.getByRole("button", { name: "Return to video" })).toBeVisible()
+  await page.getByRole("button", { name: "Return to video" }).click()
   await expect(page.getByLabel("Open saved edit for frame 1")).toBeVisible()
   await page.getByLabel("Video volume").fill("0.35")
   await page.getByLabel("Mute video").click()
@@ -254,6 +273,10 @@ test("project lifecycle survives reload and supports rename, selection, and conf
   await expect(page.getByRole("button", { name: "Qualified project", exact: true })).toBeVisible()
   await expect(page.getByLabel("Video volume")).toHaveValue("0.35")
   await expect(page.getByLabel("Unmute video")).toBeVisible()
+  await page.getByLabel("Frame edits").getByRole("button", { name: "Frame 1" }).click()
+  await expect.poll(() => state.maskRequests).toBe(1)
+  await expect(page.getByText("Flattened · view only")).toHaveCount(0)
+  await page.getByRole("button", { name: "Return to video" }).click()
   const restartedPage = await page.context().newPage()
   await installMockBackend(restartedPage, state)
   await restartedPage.goto("/", { waitUntil: "domcontentloaded" })
@@ -388,7 +411,11 @@ test("trim, exact-frame, frame-edit, guard, marker, tray, and downloads round tr
   await expect(page.getByText(/Frame 4 \/ 4/)).toBeVisible()
   await expect(page.getByLabel("Open saved edit for frame 2")).toBeVisible()
   await page.getByLabel("Open saved edit for frame 2").click()
+  await page.evaluate(() => document.body.focus())
+  await page.keyboard.press("]")
+  await expect(page.getByRole("button", { name: "Save & return" })).toBeEnabled()
   await page.getByRole("button", { name: "Save & return" }).click()
+  await expect(page.getByRole("button", { name: "Edit frame" })).toBeVisible()
   await expect(page.getByText(/Frame 2 \/ 4/)).toBeVisible()
   expect(state.frameEdits).toHaveLength(1)
   expect(state.frameEditPosts).toBe(2)

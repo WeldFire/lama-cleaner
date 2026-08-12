@@ -8,7 +8,23 @@ export type FrameEdit = {
   id: string
   frameOrdinal: number
   renderUrl?: string
+  maskUrl?: string
+  document?: FrameEditDocument
+  compatibility: "resumable" | "flattened"
   updatedAt?: string
+}
+
+export type FrameEditDocument = {
+  schemaVersion: 2
+  revision: number
+  frameKey: FrameKey
+  canonicalImage: { ordinal: number }
+  canvas: { width: number; height: number }
+  crop: { x: number; y: number; width: number; height: number }
+  mask: { format: "image/png"; coordinateSpace: "canvas" }
+  lines: { committed: import("@/lib/types").LineGroup[]; current: import("@/lib/types").LineGroup }
+  tools: { baseBrushSize: number; brushSizeScale: number }
+  operation: { kind: "image-edit"; model: string; settings: Record<string, unknown> }
 }
 
 export type FrameEditSession = {
@@ -32,6 +48,7 @@ export type FrameEditAction =
   | { type: "REQUEST_RETURN" }
   | { type: "REQUEST_EXIT"; kind: "close" | "delete-project" }
   | { type: "SAVE_COMPLETE" }
+  | { type: "AUTOSAVE_COMPLETE"; editId: string }
   | { type: "DISCARD" }
   | { type: "KEEP_EDITING" }
 
@@ -137,6 +154,10 @@ export function reduceFrameEditSession(
         dirty: false,
         pending: null,
       }
+    case "AUTOSAVE_COMPLETE":
+      return state.mode === "image"
+        ? { ...state, activeEditId: action.editId, dirty: false }
+        : state
     case "DISCARD": {
       const pending = state.pending
       if (pending?.kind === "open" && pending.ordinal !== undefined) {

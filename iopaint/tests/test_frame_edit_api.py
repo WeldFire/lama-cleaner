@@ -1,3 +1,4 @@
+import json
 import sqlite3
 
 from fastapi import FastAPI
@@ -72,6 +73,56 @@ def test_project_frame_and_frame_edit_endpoints(tmp_path, monkeypatch):
     reopened = client.get(f"/api/v1/projects/{project_id}/frame-edits/{edit_id}/image")
     assert reopened.status_code == 200
     assert reopened.content == b"edited png"
+    assert client.get(f"/api/v1/projects/{project_id}/frame-edits/{edit_id}/mask").status_code == 404
+
+    resumable_document = {
+        "schema_version": 2,
+        "revision": 1,
+        "frame_key": {"ordinal": 0, "project_time_num": "0", "project_time_den": "1"},
+        "canonical_image": {"ordinal": 0},
+        "canvas": {"width": 16, "height": 16},
+        "crop": {"x": 0, "y": 0, "width": 16, "height": 16},
+        "mask": {"format": "image/png", "coordinate_space": "canvas"},
+        "lines": {"committed": [], "current": []},
+        "tools": {"base_brush_size": 20, "brush_size_scale": 1},
+        "operation": {"kind": "image-edit", "model": "cv2", "settings": {}},
+    }
+    rejected = client.post(
+        f"/api/v1/projects/{project_id}/frame-edits",
+        data={"ordinal": "0", "document": json.dumps(resumable_document)},
+        files={"render": ("render.png", b"updated png", "image/png")},
+    )
+    assert rejected.status_code == 400
+
+    updated = client.post(
+        f"/api/v1/projects/{project_id}/frame-edits",
+        data={
+            "ordinal": "0",
+            "frame_edit_id": edit_id,
+            "document": json.dumps(resumable_document),
+        },
+        files={
+            "render": ("render.png", b"updated png", "image/png"),
+            "mask": ("mask.png", b"editable mask", "image/png"),
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["document"] == resumable_document
+    assert updated.json()["render_hash"]
+    assert updated.json()["mask_hash"]
+    restored_mask = client.get(f"/api/v1/projects/{project_id}/frame-edits/{edit_id}/mask")
+    assert restored_mask.status_code == 200
+    assert restored_mask.content == b"editable mask"
+    stale_revision = client.post(
+        f"/api/v1/projects/{project_id}/frame-edits",
+        data={"ordinal": "0", "frame_edit_id": edit_id, "document": json.dumps(resumable_document)},
+        files={
+            "render": ("render.png", b"stale render", "image/png"),
+            "mask": ("mask.png", b"stale mask", "image/png"),
+        },
+    )
+    assert stale_revision.status_code == 409
+    assert client.get(f"/api/v1/projects/{project_id}/frame-edits/{edit_id}/image").content == b"updated png"
     assert client.delete(f"/api/v1/projects/{project_id}/frame-edits/{edit_id}").json()["deleted"] is True
     assert client.get(f"/api/v1/projects/{project_id}/frame-edits").json() == []
 

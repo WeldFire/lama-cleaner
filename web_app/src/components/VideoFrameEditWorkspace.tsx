@@ -1,5 +1,5 @@
 import { Check, ChevronLeft, ChevronRight, Download, Edit3, Loader2, Pause, Pencil, Play, Save, Trash2, Video, Volume2, VolumeX, X } from "lucide-react"
-import { useEffect, useMemo, useReducer, useRef, useState, type PointerEvent } from "react"
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type PointerEvent } from "react"
 
 import Workspace from "@/components/Workspace"
 import {
@@ -26,6 +26,7 @@ import {
   type VideoProject,
 } from "@/lib/projectApi"
 import { useStore } from "@/lib/states"
+import { blobToImage, generateMask } from "@/lib/utils"
 import { trimVideo } from "@/lib/videoApi"
 import { resolveVideoHotkey } from "@/lib/videoHotkeys"
 
@@ -35,6 +36,16 @@ const LARGE_DRAG_FRACTION = 0.1
 const FAST_PREVIEW_STEP_SECONDS = 0.25
 const VIDEO_VOLUME_KEY = "iopaint.video-volume"
 const VIDEO_MUTED_KEY = "iopaint.video-muted"
+
+const editorSnapshot = (state: ReturnType<typeof useStore.getState>) => JSON.stringify({
+  renders: state.editorState.renders.length,
+  lines: state.editorState.lineGroups,
+  currentLine: state.editorState.curLineGroup,
+  extraMasks: state.editorState.extraMasks.map((mask) => mask.src),
+  history: state.editorState.historyActions.length,
+  brush: [state.editorState.baseBrushSize, state.editorState.brushSizeScale],
+  crop: state.cropperState,
+})
 
 const storedVideoVolume = () => {
   const stored = Number(localStorage.getItem(VIDEO_VOLUME_KEY))
@@ -92,13 +103,16 @@ export default function VideoFrameEditWorkspace({
   const lastAudibleVolumeRef = useRef(volume > 0 ? volume : 1)
   const setFile = useStore((state) => state.setFile)
   const getCurrentTargetFile = useStore((state) => state.getCurrentTargetFile)
-  const editActivity = useStore((state) =>
-    state.editorState.renders.length +
-    state.editorState.curLineGroup.length +
-    state.editorState.extraMasks.length +
-    state.editorState.historyActions.length
-  )
-  const openedActivity = useRef(0)
+  const imageWidth = useStore((state) => state.imageWidth)
+  const imageHeight = useStore((state) => state.imageHeight)
+  const editorState = useStore((state) => state.editorState)
+  const cropperState = useStore((state) => state.cropperState)
+  const settings = useStore((state) => state.settings)
+  const editActivity = useStore(editorSnapshot)
+  const openedActivity = useRef("")
+  const documentRevisionRef = useRef(0)
+  const activeEditIdRef = useRef<string | null>(null)
+  const frameEditSaveQueueRef = useRef(Promise.resolve())
   const timelineRef = useRef<HTMLDivElement>(null)
   const draggedTrimHandle = useRef<"start" | "end" | null>(null)
   const trimStartRef = useRef(0)
@@ -365,8 +379,42 @@ export default function VideoFrameEditWorkspace({
       }
       videoRef.current?.pause()
       await setFile(frameFile)
-      openedActivity.current = useStore.getState().editorState.renders.length
-      dispatch({ type: "OPEN", ordinal, editId: edit?.id })
+      if (edit?.compatibility === "resumable" && edit.document && edit.maskUrl) {
+        const maskResponse = await fetch(edit.maskUrl)
+        if (!maskResponse.ok) throw new Error("Unable to restore the editable frame mask")
+        const maskImage = await blobToImage(await maskResponse.blob())
+        const document = edit.document
+        const state = useStore.getState()
+        state.updateAppState({ imageWidth: document.canvas.width, imageHeight: document.canvas.height })
+        state.updateEditorState({
+          baseBrushSize: document.tools.baseBrushSize,
+          brushSizeScale: document.tools.brushSizeScale,
+          // The persisted PNG is the authoritative composite; retaining the
+          // vector commands in the document aids compatibility without applying
+          // their pixels twice during subsequent edits.
+          lineGroups: [],
+          curLineGroup: [],
+          extraMasks: [maskImage],
+          prevExtraMasks: [],
+          temporaryMasks: [],
+        })
+        state.setCropperX(document.crop.x)
+        state.setCropperY(document.crop.y)
+        state.setCropperWidth(document.crop.width)
+        state.setCropperHeight(document.crop.height)
+        state.updateSettings(document.operation.settings)
+        const restoredModel = state.serverConfig.modelInfos.find((model) => model.name === document.operation.model)
+        if (restoredModel) state.updateSettings({ model: restoredModel })
+        documentRevisionRef.current = document.revision
+        activeEditIdRef.current = edit.id
+      } else {
+        documentRevisionRef.current = 0
+        activeEditIdRef.current = null
+      }
+      openedActivity.current = editorSnapshot(useStore.getState())
+      // Flattened legacy edits are opened as a new editable copy so saving can
+      // never overwrite the only surviving render from the older format.
+      dispatch({ type: "OPEN", ordinal, editId: edit?.compatibility === "resumable" ? edit.id : undefined })
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to open frame")
     } finally {
@@ -378,13 +426,73 @@ export default function VideoFrameEditWorkspace({
     if (project) setProject(await getVideoProject(project.id))
   }
 
+  const persistCurrentDocument = useCallback(async () => {
+    if (!project) throw new Error("Video project is unavailable")
+    const render = await getCurrentTargetFile()
+    // The PNG is the complete composite mask for robust recovery; the vector
+    // commands are also retained so brush geometry remains editable on reopen.
+    const maskCanvas = generateMask(
+      imageWidth,
+      imageHeight,
+      [...editorState.lineGroups, editorState.curLineGroup],
+      editorState.extraMasks
+    )
+    const maskBlob = await new Promise<Blob>((resolve, reject) => maskCanvas.toBlob(
+      (blob) => blob ? resolve(blob) : reject(new Error("Unable to serialize the editable mask")),
+      "image/png"
+    ))
+    const mask = new File([maskBlob], `frame-${session.currentOrdinal + 1}-mask.png`, { type: "image/png" })
+    const frameKey = project.frames[session.currentOrdinal]
+    if (!frameKey) throw new Error("Canonical frame identity is unavailable")
+    const documentBase = {
+      schemaVersion: 2 as const,
+      frameKey,
+      canonicalImage: { ordinal: session.currentOrdinal },
+      canvas: { width: imageWidth, height: imageHeight },
+      crop: cropperState,
+      mask: { format: "image/png" as const, coordinateSpace: "canvas" as const },
+      lines: { committed: editorState.lineGroups, current: editorState.curLineGroup },
+      tools: { baseBrushSize: editorState.baseBrushSize, brushSizeScale: editorState.brushSizeScale },
+      operation: {
+        kind: "image-edit" as const,
+        model: settings.model.name,
+        settings: {
+          prompt: settings.prompt,
+          negativePrompt: settings.negativePrompt,
+          seed: settings.seed,
+          cv2Radius: settings.cv2Radius,
+          cv2Flag: settings.cv2Flag,
+          sdStrength: settings.sdStrength,
+        },
+      },
+    }
+    // Revision and edit identity are reserved inside the queue. An autosave and
+    // an immediate manual save therefore cannot race into duplicate revisions
+    // or create two Frame Edits for the same initial document.
+    const save = frameEditSaveQueueRef.current.then(async () => {
+      const revision = documentRevisionRef.current + 1
+      const saved = await saveProjectFrameEdit(
+        project.id,
+        session.currentOrdinal,
+        render,
+        { ...documentBase, revision },
+        mask,
+        activeEditIdRef.current
+      )
+      documentRevisionRef.current = revision
+      activeEditIdRef.current = saved.id
+      return saved
+    })
+    frameEditSaveQueueRef.current = save.then(() => undefined, () => undefined)
+    return save
+  }, [cropperState, editorState, getCurrentTargetFile, imageHeight, imageWidth, project, session.currentOrdinal, settings])
+
   const saveAndReturn = async () => {
     if (!project) return
     setBusy(true)
     setError("")
     try {
-      const render = await getCurrentTargetFile()
-      await saveProjectFrameEdit(project.id, session.currentOrdinal, render, session.activeEditId)
+      await persistCurrentDocument()
       const queued = session.pending
       const refreshed = await getVideoProject(project.id)
       setProject(refreshed)
@@ -408,6 +516,30 @@ export default function VideoFrameEditWorkspace({
       setBusy(false)
     }
   }
+
+  useEffect(() => {
+    if (session.mode !== "image" || !session.dirty || busy) return
+    const savedSnapshot = editActivity
+    const timeout = window.setTimeout(() => {
+      void persistCurrentDocument().then(async (saved) => {
+        const refreshed = project ? await getVideoProject(project.id) : null
+        if (refreshed) {
+          setProject(refreshed)
+          projectLifecycleRef.current = { id: refreshed.id, durable: refreshed.durable }
+          onProjectReady?.(refreshed)
+        }
+        // Persisting does not reset the editor store, so its undo/redo history
+        // remains available for as long as this Frame Edit stays mounted.
+        if (editorSnapshot(useStore.getState()) === savedSnapshot) {
+          openedActivity.current = savedSnapshot
+          dispatch({ type: "AUTOSAVE_COMPLETE", editId: saved.id })
+        }
+      }).catch((reason) => {
+        setError(reason instanceof Error ? `Frame Edit autosave failed: ${reason.message}` : "Frame Edit autosave failed")
+      })
+    }, 1500)
+    return () => window.clearTimeout(timeout)
+  }, [busy, editActivity, onProjectReady, persistCurrentDocument, project, session.dirty, session.mode])
 
   const discard = async () => {
     const pending = session.pending
@@ -717,6 +849,7 @@ export default function VideoFrameEditWorkspace({
           {project.frameEdits.map((edit) => (
             <div className="flex shrink-0 items-center rounded border bg-muted/50" key={edit.id}>
               <button className="px-3 py-1.5 text-xs" onClick={() => openFrame(edit.frameOrdinal, edit)} type="button">Frame {edit.frameOrdinal + 1}</button>
+              {edit.compatibility === "flattened" && <span className="pr-2 text-[10px] text-muted-foreground" title="This older render remains untouched; saving opens it as a new resumable Frame Edit.">Legacy render · copies on save</span>}
               <button aria-label={`Delete frame edit ${edit.frameOrdinal + 1}`} className="border-l p-1.5 text-destructive" onClick={() => setDeleteCandidate(edit)} type="button"><Trash2 className="h-3.5 w-3.5" /></button>
             </div>
           ))}

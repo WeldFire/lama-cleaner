@@ -36,6 +36,11 @@ class FrameEditApi:
             self.frame_edit_image,
             methods=["GET"],
         )
+        self.router.add_api_route(
+            "/{project_id}/frame-edits/{frame_edit_id}/mask",
+            self.frame_edit_mask,
+            methods=["GET"],
+        )
         self.router.add_api_route("/{project_id}/frame-edits/{frame_edit_id}", self.delete_frame_edit, methods=["DELETE"])
 
     def create_project(self, file: UploadFile = File(...), name: str = Form("Untitled video project")):
@@ -182,11 +187,37 @@ class FrameEditApi:
             document_payload = json.loads(document)
         except json.JSONDecodeError as error:
             raise HTTPException(status_code=400, detail="Frame edit document must be valid JSON") from error
+        if not isinstance(document_payload, dict):
+            raise HTTPException(status_code=400, detail="Frame edit document must be a JSON object")
+        schema_version = document_payload.get("schema_version", document_payload.get("schemaVersion", 1))
+        if not isinstance(schema_version, int):
+            raise HTTPException(status_code=400, detail="Frame edit schema version must be an integer")
+        # A resumable document and its editable mask form one atomic revision. Older
+        # flattened revisions remain valid and viewable without manufacturing a mask.
+        if schema_version >= 2 and mask is None:
+            raise HTTPException(status_code=400, detail="Resumable frame edits require an editable mask")
         handle = self._open(project_id, "write")
         try:
             snapshot = self.store.project_snapshot(handle)
             if ordinal < 0 or ordinal >= len(snapshot["frames"]):
                 raise HTTPException(status_code=404, detail="Frame not found")
+            if schema_version >= 2:
+                frame_key = document_payload.get("frame_key")
+                expected = snapshot["frames"][ordinal]
+                identity_matches = (
+                    isinstance(frame_key, dict)
+                    and frame_key.get("ordinal") == ordinal
+                    and str(frame_key.get("project_time_num")) == str(expected["project_time_num"])
+                    and str(frame_key.get("project_time_den")) == str(expected["project_time_den"])
+                )
+                if not identity_matches:
+                    raise HTTPException(status_code=400, detail="Frame edit document does not match the canonical frame identity")
+                revision = document_payload.get("revision")
+                if not isinstance(revision, int) or revision < 1:
+                    raise HTTPException(status_code=400, detail="Frame edit document revision must be a positive integer")
+                prior_edit = next((item for item in snapshot["frame_edits"] if item["id"] == frame_edit_id), None)
+                if prior_edit and revision <= int(prior_edit.get("document", {}).get("revision", 0)):
+                    raise HTTPException(status_code=409, detail="Frame edit document revision is stale")
             assets = {"render": render.file.read()}
             if mask is not None:
                 assets["mask"] = mask.file.read()
@@ -220,6 +251,24 @@ class FrameEditApi:
                 self.store.asset_path(handle, edit["render_hash"]),
                 media_type="image/png",
                 filename=f"frame-edit-{frame_edit_id}.png",
+            )
+        finally:
+            self.store.close(handle)
+
+    def frame_edit_mask(self, project_id: str, frame_edit_id: str):
+        """Return the canvas-aligned editable mask owned by a Frame Edit."""
+        handle = self._open(project_id, "read")
+        try:
+            edit = next(
+                (item for item in self.store.project_snapshot(handle)["frame_edits"] if item["id"] == frame_edit_id),
+                None,
+            )
+            if edit is None or not edit.get("mask_hash"):
+                raise HTTPException(status_code=404, detail="Frame edit mask not found")
+            return FileResponse(
+                self.store.asset_path(handle, edit["mask_hash"]),
+                media_type="image/png",
+                filename=f"frame-edit-{frame_edit_id}-mask.png",
             )
         finally:
             self.store.close(handle)

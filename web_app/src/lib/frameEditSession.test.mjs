@@ -32,6 +32,15 @@ test("dirty project exits enter the shared save-discard guard", () => {
   )
 })
 
+test("autosave records the durable edit without leaving image mode", () => {
+  const dirty = { ...createFrameEditSession(5), mode: "image", dirty: true, currentOrdinal: 2 }
+  const saved = reduceFrameEditSession(dirty, { type: "AUTOSAVE_COMPLETE", editId: "edit-2" })
+  assert.equal(saved.mode, "image")
+  assert.equal(saved.currentOrdinal, 2)
+  assert.equal(saved.activeEditId, "edit-2")
+  assert.equal(saved.dirty, false)
+})
+
 test("dirty navigation resolves through save, discard, and keep-editing paths", () => {
   const dirty = { ...createFrameEditSession(8), mode: "image", dirty: true, currentOrdinal: 2 }
   const pending = reduceFrameEditSession(dirty, { type: "REQUEST_NAVIGATE", ordinal: 6 })

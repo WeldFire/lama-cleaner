@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] A missing Trim Input presents an explicit relink workflow instead of making the project unusable or silently dropping work.
 - [ ] A moved copy with a matching Source Fingerprint relinks successfully and preserves FrameKeys, Trim Range, playhead, markers, and Frame Edits.
