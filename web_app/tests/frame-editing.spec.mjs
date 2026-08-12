@@ -509,7 +509,7 @@ test("undo survives autosave only while the Frame Edit remains active", async ({
   await installMockBackend(page, state)
   await createProjectFromTrimInput(page)
   await page.getByRole("button", { name: "Edit frame" }).click()
-  await drawOnCurrentFrame(page)
+  await cropCurrentFrame(page)
 
   const undo = page.locator("button:has(svg.lucide-undo)")
   await expect(undo).toBeEnabled()
@@ -519,6 +519,6 @@ test("undo survives autosave only while the Frame Edit remains active", async ({
   await expect(undo).toBeEnabled()
 
   await page.getByRole("button", { name: "Save & return" }).click()
-  await page.getByLabel("Open saved edit for frame 1").click()
+  await page.getByLabel("Frame edits").getByRole("button", { name: "Frame 1" }).click()
   await expect(page.locator("button:has(svg.lucide-undo)")).toBeDisabled()
 })
