@@ -97,6 +97,20 @@ def test_new_writer_fences_previous_handle(tmp_path):
     current_store.close(current)
 
 
+def test_startup_preserves_an_actively_leased_draft(tmp_path):
+    now = [1000.0]
+    owner_store = ProjectStore(tmp_path, instance_id="owner", clock=lambda: now[0])
+    owner = owner_store.open(name="Active draft")
+    project_id = owner.project_id
+
+    contender = ProjectStore(tmp_path, instance_id="contender", clock=lambda: now[0])
+    assert owner.path.exists()
+    with pytest.raises(PermissionError, match="actively leased"):
+        contender.open(project_id)
+
+    owner_store.close(owner)
+
+
 def test_writer_lease_heartbeat_abandonment_takeover_and_restart(tmp_path):
     now = [1000.0]
     first_store = ProjectStore(tmp_path, instance_id="first", clock=lambda: now[0])

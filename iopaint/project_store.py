@@ -86,26 +86,38 @@ class ProjectStore:
             for project_id in draft_candidates:
                 project_database = self.projects_dir / project_id / "project.sqlite"
                 activated = None
+                actively_leased = False
                 if project_database.exists():
+                    project = None
                     try:
                         project = sqlite3.connect(project_database)
                         activated = project.execute(
                             "SELECT value FROM metadata WHERE key='activated_at'"
                         ).fetchone()
-                    except sqlite3.DatabaseError:
+                        lease_owner = project.execute(
+                            "SELECT value FROM metadata WHERE key='lease_owner'"
+                        ).fetchone()
+                        lease_expiry = project.execute(
+                            "SELECT value FROM metadata WHERE key='lease_expires_at'"
+                        ).fetchone()
+                        actively_leased = bool(
+                            lease_owner
+                            and lease_expiry
+                            and float(lease_expiry[0]) > self._clock()
+                        )
+                    except (sqlite3.DatabaseError, TypeError, ValueError):
                         # Recovery audit will classify the project; never treat
                         # unreadable metadata as proof that a draft is disposable.
                         activated = ("recovery-pending",)
                     finally:
-                        if "project" in locals():
+                        if project is not None:
                             project.close()
-                            del project
                 if activated:
                     connection.execute(
                         "UPDATE projects SET activated_at=? WHERE id=?",
                         (activated[0], project_id),
                     )
-                else:
+                elif not actively_leased:
                     abandoned_drafts.append(project_id)
             connection.executemany("DELETE FROM projects WHERE id=?", ((project_id,) for project_id in abandoned_drafts))
         for project_id in abandoned_drafts:
