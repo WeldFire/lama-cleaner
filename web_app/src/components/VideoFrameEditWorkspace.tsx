@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, ChevronRight, Download, Edit3, Loader2, Pause, Pencil, Play, Save, Trash2, Video, X } from "lucide-react"
+import { Check, ChevronLeft, ChevronRight, Download, Edit3, Loader2, Pause, Pencil, Play, Save, Trash2, Video, Volume2, VolumeX, X } from "lucide-react"
 import { useEffect, useMemo, useReducer, useRef, useState, type PointerEvent } from "react"
 
 import Workspace from "@/components/Workspace"
@@ -15,6 +15,7 @@ import {
 import { reduceFrameEditSession, createFrameEditSession, type FrameEdit } from "@/lib/frameEditSession"
 import {
   createVideoProject,
+  discardDraftVideoProject,
   deleteProjectFrameEdit,
   deleteVideoProject,
   getProjectFrame,
@@ -79,6 +80,7 @@ export default function VideoFrameEditWorkspace({
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState("")
   const [playing, setPlaying] = useState(false)
+  const [volume, setVolume] = useState(1)
   const setFile = useStore((state) => state.setFile)
   const getCurrentTargetFile = useStore((state) => state.getCurrentTargetFile)
   const editActivity = useStore((state) =>
@@ -112,6 +114,7 @@ export default function VideoFrameEditWorkspace({
   const [sessionSaveError, setSessionSaveError] = useState("")
   const [renamingProject, setRenamingProject] = useState(false)
   const [projectName, setProjectName] = useState("")
+  const projectLifecycleRef = useRef<{ id: string; durable: boolean } | null>(null)
 
   useEffect(() => () => URL.revokeObjectURL(source), [source])
 
@@ -140,6 +143,7 @@ export default function VideoFrameEditWorkspace({
       .then((created) => {
         if (!live) return
         setProject(created)
+        projectLifecycleRef.current = { id: created.id, durable: created.durable }
         setProjectName(created.name)
         dispatch({
           type: "HYDRATE",
@@ -147,12 +151,19 @@ export default function VideoFrameEditWorkspace({
           session: created.sessionState,
         })
         sessionHydrated.current = true
-        onProjectReady?.(created)
+        if (created.durable) onProjectReady?.(created)
       })
       .catch((reason) => live && setError(reason instanceof Error ? reason.message : "Unable to open project"))
       .finally(() => live && setBusy(false))
     return () => { live = false }
   }, [file, onProjectReady, projectId])
+
+  useEffect(() => () => {
+    const lifecycle = projectLifecycleRef.current
+    if (lifecycle && !lifecycle.durable) {
+      void discardDraftVideoProject(lifecycle.id, true).catch(() => undefined)
+    }
+  }, [])
 
   useEffect(() => {
     if (!project || !sessionHydrated.current) return
@@ -289,6 +300,24 @@ export default function VideoFrameEditWorkspace({
     }
   }
 
+  const downloadCanonicalFrame = async () => {
+    if (!project) return
+    setBusy(true)
+    setError("")
+    try {
+      const frame = await getProjectFrame(project.id, session.currentOrdinal)
+      const link = document.createElement("a")
+      link.href = URL.createObjectURL(frame)
+      link.download = `${file.name.replace(/\.[^.]+$/, "")}_frame-${session.currentOrdinal + 1}.png`
+      link.click()
+      URL.revokeObjectURL(link.href)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to save this frame")
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const openFrame = async (ordinal: number, edit?: FrameEdit, force = false) => {
     if (!project) return
     if (!force && session.mode === "image" && session.dirty) {
@@ -331,6 +360,8 @@ export default function VideoFrameEditWorkspace({
       const queued = session.pending
       const refreshed = await getVideoProject(project.id)
       setProject(refreshed)
+      projectLifecycleRef.current = { id: refreshed.id, durable: refreshed.durable }
+      onProjectReady?.(refreshed)
       dispatch({ type: "SAVE_COMPLETE" })
       if (queued?.kind === "open" && queued.ordinal !== undefined) {
         await openFrame(queued.ordinal, refreshed.frameEdits.find((item) => item.id === queued.editId), true)
@@ -359,7 +390,7 @@ export default function VideoFrameEditWorkspace({
     } else if (pending?.kind === "navigate" && pending.ordinal !== undefined) {
       seek(pending.ordinal)
     } else if (pending?.kind === "close") {
-      onClose()
+      await closeProject()
     } else if (pending?.kind === "delete-project") {
       setDeleteProjectRequested(true)
     } else {
@@ -486,10 +517,22 @@ export default function VideoFrameEditWorkspace({
     if (session.mode === "image" && session.dirty) {
       dispatch({ type: "REQUEST_EXIT", kind })
     } else if (kind === "close") {
-      onClose()
+      void closeProject()
     } else {
       setDeleteProjectRequested(true)
     }
+  }
+
+  const closeProject = async () => {
+    if (project && !project.durable) {
+      projectLifecycleRef.current = null
+      try {
+        await discardDraftVideoProject(project.id)
+      } catch {
+        // Draft cleanup is best-effort; it is never exposed in Recent Projects.
+      }
+    }
+    onClose()
   }
 
   const saveProjectName = async () => {
@@ -504,8 +547,9 @@ export default function VideoFrameEditWorkspace({
       setBusy(true)
       const renamed = await renameVideoProject(project.id, normalized)
       setProject(renamed)
+      projectLifecycleRef.current = { id: renamed.id, durable: renamed.durable }
       setProjectName(renamed.name)
-      onProjectReady?.(renamed)
+      if (renamed.durable) onProjectReady?.(renamed)
       setRenamingProject(false)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to rename this project")
@@ -545,7 +589,7 @@ export default function VideoFrameEditWorkspace({
             className="min-h-0 flex-1 rounded-lg bg-black object-contain"
             draggable={false}
             src={source}
-            onLoadedMetadata={(event) => { setDuration(event.currentTarget.duration); event.currentTarget.currentTime = currentSeconds }}
+            onLoadedMetadata={(event) => { setDuration(event.currentTarget.duration); event.currentTarget.currentTime = currentSeconds; event.currentTarget.volume = volume }}
             onPause={() => setPlaying(false)}
             onPlay={() => setPlaying(true)}
             onTimeUpdate={(event) => {
@@ -568,7 +612,15 @@ export default function VideoFrameEditWorkspace({
           <button aria-label="Next exact frame" className="rounded bg-muted p-2 disabled:opacity-50" disabled={busy || session.currentOrdinal >= session.trimEndOrdinal} onClick={() => requestNavigation(session.currentOrdinal + 1)} type="button"><ChevronRight className="h-4 w-4" /></button>
           <span className="min-w-0 truncate text-sm">Frame {session.currentOrdinal + 1} / {project.frames.length} · {currentSeconds.toFixed(3)}s</span>
           {session.mode === "video" ? (
-            <button className="ml-auto flex items-center gap-2 rounded bg-primary px-3 py-2 text-sm text-primary-foreground" disabled={busy} onClick={() => openFrame(session.currentOrdinal)} type="button"><Edit3 className="h-4 w-4" />Edit frame</button>
+            <>
+              <label className="ml-auto flex items-center gap-2 text-sm" title="Video volume">
+                {volume === 0 ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                <span className="sr-only">Video volume</span>
+                <input aria-label="Video volume" className="w-24 accent-blue-500" max="1" min="0" onChange={(event) => { const next = Number(event.target.value); setVolume(next); if (videoRef.current) videoRef.current.volume = next }} step="0.05" type="range" value={volume} />
+              </label>
+              <button className="flex items-center gap-2 rounded border px-3 py-2 text-sm" disabled={busy} onClick={downloadCanonicalFrame} type="button"><Download className="h-4 w-4" />Save Frame</button>
+              <button className="flex items-center gap-2 rounded bg-primary px-3 py-2 text-sm text-primary-foreground" disabled={busy} onClick={() => openFrame(session.currentOrdinal)} type="button"><Edit3 className="h-4 w-4" />Edit frame</button>
+            </>
           ) : (
             <>
               <button className="ml-auto rounded border px-3 py-2 text-sm" onClick={() => dispatch({ type: "REQUEST_RETURN" })} type="button"><Video className="mr-2 inline h-4 w-4" />Return to video</button>

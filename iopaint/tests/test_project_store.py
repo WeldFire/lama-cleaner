@@ -1,4 +1,6 @@
 import hashlib
+import sqlite3
+import threading
 
 import pytest
 
@@ -82,12 +84,101 @@ def test_session_state_is_persisted_with_project(tmp_path):
 def test_project_rename_updates_catalog_snapshot_and_manifest(tmp_path):
     store = ProjectStore(tmp_path)
     handle = store.open(name="Original name")
+    store.transact(handle, ProjectMutation(
+        "save_frame_edit", {"id": "edit-1", "ordinal": 0, "document": {}}, {"render": b"render"},
+    ))
 
     revision = store.transact(handle, ProjectMutation("rename_project", {"name": "Vacation cleanup"}))
 
-    assert revision == 1
+    assert revision == 2
     assert store.project_snapshot(handle)["name"] == "Vacation cleanup"
     assert store.lifecycle(None, "list")[0]["name"] == "Vacation cleanup"
     manifest = (handle.path / "manifest.json").read_text(encoding="utf-8")
     assert '"name": "Vacation cleanup"' in manifest
     store.close(handle)
+
+
+def test_draft_project_is_listed_only_after_first_frame_edit(tmp_path):
+    store = ProjectStore(tmp_path)
+    handle = store.open(name="Draft clip")
+
+    assert store.project_snapshot(handle)["durable"] is False
+    assert store.lifecycle(None, "list") == []
+
+    store.transact(handle, ProjectMutation(
+        "save_frame_edit", {"id": "edit-1", "ordinal": 0, "document": {}}, {"render": b"render"},
+    ))
+
+    assert store.project_snapshot(handle)["durable"] is True
+    assert store.lifecycle(None, "list")[0]["name"] == "Draft clip"
+
+    # Simulate interruption after the authoritative project commit but before
+    # the catalog cache was updated; listing repairs the promotion.
+    with sqlite3.connect(store._catalog) as catalog:
+        catalog.execute("UPDATE projects SET activated_at=NULL WHERE id=?", (handle.project_id,))
+    restarted = ProjectStore(tmp_path)
+    assert restarted.lifecycle(None, "list")[0]["name"] == "Draft clip"
+    store.close(handle)
+
+
+def test_drafts_are_physically_removed_on_exit_and_backend_restart(tmp_path):
+    store = ProjectStore(tmp_path)
+    exited = store.open(name="Exited draft")
+    exited_path = exited.path
+    exited_id = exited.project_id
+    store.close(exited)
+
+    assert store.lifecycle(exited_id, "discard-draft")["deleted"] is True
+    assert not exited_path.exists()
+
+    abandoned = store.open(name="Abandoned draft")
+    abandoned_path = abandoned.path
+    store.close(abandoned)
+    restarted = ProjectStore(tmp_path)
+
+    assert restarted.lifecycle(None, "list") == []
+    assert not abandoned_path.exists()
+
+
+def test_draft_discard_waits_for_first_frame_edit_promotion(tmp_path, monkeypatch):
+    store = ProjectStore(tmp_path)
+    initial = store.open(name="Promotion race")
+    project_id = initial.project_id
+    store.close(initial)
+    mutation_started = threading.Event()
+    allow_commit = threading.Event()
+    original_apply = store._apply_mutation
+
+    def pause_first_save(connection, kind, payload):
+        original_apply(connection, kind, payload)
+        if kind == "save_frame_edit":
+            mutation_started.set()
+            assert allow_commit.wait(timeout=2)
+
+    monkeypatch.setattr(store, "_apply_mutation", pause_first_save)
+
+    def save_edit():
+        handle = store.open(project_id)
+        try:
+            store.transact(handle, ProjectMutation(
+                "save_frame_edit", {"id": "edit-1", "ordinal": 0, "document": {}}, {"render": b"render"},
+            ))
+        finally:
+            store.close(handle)
+
+    save_thread = threading.Thread(target=save_edit)
+    save_thread.start()
+    assert mutation_started.wait(timeout=2)
+    cleanup_result = {}
+    cleanup_thread = threading.Thread(
+        target=lambda: cleanup_result.update(store.lifecycle(project_id, "discard-draft"))
+    )
+    cleanup_thread.start()
+    allow_commit.set()
+    save_thread.join(timeout=2)
+    cleanup_thread.join(timeout=2)
+
+    assert cleanup_result["deleted"] is False
+    reopened = store.open(project_id, "read")
+    assert store.project_snapshot(reopened)["frame_edits"][0]["id"] == "edit-1"
+    store.close(reopened)

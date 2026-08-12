@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import sys
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -56,13 +58,46 @@ class ProjectStore:
         self.projects_dir = self.root / "projects"
         self.projects_dir.mkdir(parents=True, exist_ok=True)
         self._catalog = self.root / "catalog.sqlite"
+        self._project_locks: dict[str, threading.RLock] = {}
+        self._project_locks_guard = threading.Lock()
         with sqlite3.connect(self._catalog) as connection:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS projects ("
                 "id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, "
-                "updated_at TEXT NOT NULL, deleted_at TEXT)"
+                "updated_at TEXT NOT NULL, activated_at TEXT, deleted_at TEXT)"
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(projects)")}
+            if "activated_at" not in columns:
+                connection.execute("ALTER TABLE projects ADD COLUMN activated_at TEXT")
+                connection.execute("UPDATE projects SET activated_at=created_at WHERE activated_at IS NULL")
+            draft_candidates = [row[0] for row in connection.execute(
+                "SELECT id FROM projects WHERE activated_at IS NULL"
+            ).fetchall()]
+            abandoned_drafts = []
+            for project_id in draft_candidates:
+                project_database = self.projects_dir / project_id / "project.sqlite"
+                activated = None
+                if project_database.exists():
+                    project = sqlite3.connect(project_database)
+                    try:
+                        activated = project.execute(
+                            "SELECT value FROM metadata WHERE key='activated_at'"
+                        ).fetchone()
+                    finally:
+                        project.close()
+                if activated:
+                    connection.execute(
+                        "UPDATE projects SET activated_at=? WHERE id=?",
+                        (activated[0], project_id),
+                    )
+                else:
+                    abandoned_drafts.append(project_id)
+            connection.executemany("DELETE FROM projects WHERE id=?", ((project_id,) for project_id in abandoned_drafts))
+        for project_id in abandoned_drafts:
+            # Drafts are disposable preparation state. A backend restart is a
+            # hard session boundary, so remove their source assets as well.
+            shutil.rmtree(self.projects_dir / project_id, ignore_errors=True)
 
     def open(
         self,
@@ -99,53 +134,120 @@ class ProjectStore:
             now = _now()
             with sqlite3.connect(self._catalog) as catalog:
                 catalog.execute(
-                    "INSERT INTO projects(id,name,created_at,updated_at) VALUES(?,?,?,?)",
+                    "INSERT INTO projects(id,name,created_at,updated_at,activated_at) VALUES(?,?,?,?,NULL)",
                     (project_id, name, now, now),
                 )
             self._write_manifest(project_path, project_id, name, 0)
         return ProjectHandle(project_id, project_path, connection, token, access_intent == "read")
 
     def transact(self, handle: ProjectHandle, mutation: ProjectMutation) -> int:
-        if handle.read_only:
-            raise PermissionError("Project is open read-only")
-        connection = handle.connection
-        current_token = int(connection.execute("SELECT value FROM metadata WHERE key='fencing_token'").fetchone()[0])
-        if current_token != handle.fencing_token:
-            raise PermissionError("This writer has been fenced by a newer project session")
-        asset_hashes = {name: self._ingest_asset(handle.path, data) for name, data in (mutation.assets or {}).items()}
-        payload = dict(mutation.payload)
-        payload["assets"] = asset_hashes
-        with connection:
-            revision = int(connection.execute("SELECT value FROM metadata WHERE key='revision'").fetchone()[0]) + 1
-            self._apply_mutation(connection, mutation.kind, payload)
-            connection.execute("UPDATE metadata SET value=? WHERE key='revision'", (str(revision),))
-        with sqlite3.connect(self._catalog) as catalog:
-            if mutation.kind == "rename_project":
-                catalog.execute(
-                    "UPDATE projects SET name=? WHERE id=?",
-                    (payload["name"], handle.project_id),
-                )
-            catalog.execute("UPDATE projects SET updated_at=? WHERE id=?", (_now(), handle.project_id))
-            name = catalog.execute("SELECT name FROM projects WHERE id=?", (handle.project_id,)).fetchone()[0]
-        self._write_manifest(handle.path, handle.project_id, name, revision)
-        return revision
+        with self._project_lock(handle.project_id):
+            if handle.read_only:
+                raise PermissionError("Project is open read-only")
+            connection = handle.connection
+            current_token = int(connection.execute("SELECT value FROM metadata WHERE key='fencing_token'").fetchone()[0])
+            if current_token != handle.fencing_token:
+                raise PermissionError("This writer has been fenced by a newer project session")
+            asset_hashes = {name: self._ingest_asset(handle.path, data) for name, data in (mutation.assets or {}).items()}
+            payload = dict(mutation.payload)
+            payload["assets"] = asset_hashes
+            with connection:
+                revision = int(connection.execute("SELECT value FROM metadata WHERE key='revision'").fetchone()[0]) + 1
+                self._apply_mutation(connection, mutation.kind, payload)
+                connection.execute("UPDATE metadata SET value=? WHERE key='revision'", (str(revision),))
+            with sqlite3.connect(self._catalog) as catalog:
+                if mutation.kind == "rename_project":
+                    catalog.execute(
+                        "UPDATE projects SET name=? WHERE id=?",
+                        (payload["name"], handle.project_id),
+                    )
+                if mutation.kind == "save_frame_edit":
+                    # A project becomes user-visible only once it owns durable work.
+                    catalog.execute(
+                        "UPDATE projects SET activated_at=COALESCE(activated_at,?) WHERE id=?",
+                        (_now(), handle.project_id),
+                    )
+                catalog.execute("UPDATE projects SET updated_at=? WHERE id=?", (_now(), handle.project_id))
+                name = catalog.execute("SELECT name FROM projects WHERE id=?", (handle.project_id,)).fetchone()[0]
+            self._write_manifest(handle.path, handle.project_id, name, revision)
+            return revision
 
     def lifecycle(self, project_id: str | None, command: str) -> Any:
+        if command == "discard-draft":
+            if not project_id:
+                raise ValueError("Draft discard requires a project ID")
+            return self._discard_draft(project_id)
         with sqlite3.connect(self._catalog) as connection:
             connection.row_factory = sqlite3.Row
             if command == "list":
+                # `activated_at` in the project database is authoritative and
+                # commits with the first Frame Edit. Repair the catalog cache
+                # if a process stopped between that commit and catalog update.
+                for row in connection.execute(
+                    "SELECT id FROM projects WHERE deleted_at IS NULL AND activated_at IS NULL"
+                ).fetchall():
+                    project_database = self.projects_dir / row["id"] / "project.sqlite"
+                    if not project_database.exists():
+                        continue
+                    project = sqlite3.connect(project_database)
+                    try:
+                        activated = project.execute(
+                            "SELECT value FROM metadata WHERE key='activated_at'"
+                        ).fetchone()
+                    finally:
+                        project.close()
+                    if activated:
+                        connection.execute(
+                            "UPDATE projects SET activated_at=? WHERE id=?",
+                            (activated[0], row["id"]),
+                        )
                 rows = connection.execute(
-                    "SELECT id,name,created_at,updated_at FROM projects WHERE deleted_at IS NULL ORDER BY updated_at DESC"
+                    "SELECT id,name,created_at,updated_at FROM projects "
+                    "WHERE deleted_at IS NULL AND activated_at IS NOT NULL ORDER BY updated_at DESC"
                 ).fetchall()
                 return [dict(row) for row in rows]
             if command not in {"trash", "restore"} or not project_id:
                 raise ValueError(f"Unsupported lifecycle command: {command}")
+            row = connection.execute("SELECT activated_at FROM projects WHERE id=?", (project_id,)).fetchone()
+            if command == "trash" and row and row["activated_at"] is None:
+                connection.execute("DELETE FROM projects WHERE id=?", (project_id,))
+                shutil.rmtree(self.projects_dir / project_id, ignore_errors=True)
+                return {"project_id": project_id, "deleted": True}
             deleted_at = _now() if command == "trash" else None
             connection.execute("UPDATE projects SET deleted_at=?,updated_at=? WHERE id=?", (deleted_at, _now(), project_id))
             return {"project_id": project_id, "deleted": command == "trash"}
 
     def close(self, handle: ProjectHandle) -> None:
         handle.connection.close()
+
+    def _project_lock(self, project_id: str) -> threading.RLock:
+        with self._project_locks_guard:
+            return self._project_locks.setdefault(project_id, threading.RLock())
+
+    def _discard_draft(self, project_id: str) -> dict[str, Any]:
+        with self._project_lock(project_id), sqlite3.connect(self._catalog) as catalog:
+            catalog.row_factory = sqlite3.Row
+            row = catalog.execute("SELECT activated_at FROM projects WHERE id=?", (project_id,)).fetchone()
+            if not row or row["activated_at"] is not None:
+                return {"project_id": project_id, "deleted": False}
+            project_database = self.projects_dir / project_id / "project.sqlite"
+            if project_database.exists():
+                project = sqlite3.connect(project_database)
+                try:
+                    activated = project.execute(
+                        "SELECT value FROM metadata WHERE key='activated_at'"
+                    ).fetchone()
+                finally:
+                    project.close()
+                if activated:
+                    catalog.execute(
+                        "UPDATE projects SET activated_at=? WHERE id=?",
+                        (activated[0], project_id),
+                    )
+                    return {"project_id": project_id, "deleted": False}
+            catalog.execute("DELETE FROM projects WHERE id=?", (project_id,))
+            shutil.rmtree(self.projects_dir / project_id, ignore_errors=True)
+            return {"project_id": project_id, "deleted": True}
 
     @staticmethod
     def _initialize(connection: sqlite3.Connection, project_id: str) -> None:
@@ -184,6 +286,10 @@ class ProjectStore:
                 "INSERT INTO frame_edits(id,ordinal,created_at,updated_at,document_json,render_hash,mask_hash) VALUES(?,?,?,?,?,?,?) "
                 "ON CONFLICT(id) DO UPDATE SET ordinal=excluded.ordinal,updated_at=excluded.updated_at,document_json=excluded.document_json,render_hash=excluded.render_hash,mask_hash=excluded.mask_hash,deleted_at=NULL",
                 (payload["id"], payload["ordinal"], now, now, json.dumps(payload.get("document", {}), sort_keys=True), assets.get("render"), assets.get("mask")),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO metadata(key,value) VALUES('activated_at',?)",
+                (now,),
             )
         elif kind == "delete_frame_edit":
             connection.execute("UPDATE frame_edits SET deleted_at=?,updated_at=? WHERE id=?", (_now(), _now(), payload["id"]))
@@ -242,11 +348,13 @@ class ProjectStore:
         frames = handle.connection.execute("SELECT ordinal,frame_key_json,png_hash FROM frames ORDER BY ordinal").fetchall()
         edits = handle.connection.execute("SELECT * FROM frame_edits WHERE deleted_at IS NULL ORDER BY ordinal").fetchall()
         session_row = handle.connection.execute("SELECT value FROM metadata WHERE key='session_state'").fetchone()
+        activation_row = handle.connection.execute("SELECT value FROM metadata WHERE key='activated_at'").fetchone()
         with sqlite3.connect(self._catalog) as catalog:
-            catalog_row = catalog.execute("SELECT name FROM projects WHERE id=?", (handle.project_id,)).fetchone()
+            catalog_row = catalog.execute("SELECT name,activated_at FROM projects WHERE id=?", (handle.project_id,)).fetchone()
         return {
             "project_id": handle.project_id,
             "name": catalog_row[0] if catalog_row else "Untitled video project",
+            "durable": bool(activation_row or (catalog_row and catalog_row[1])),
             "revision": int(handle.connection.execute("SELECT value FROM metadata WHERE key='revision'").fetchone()[0]),
             "source": None if source is None else {**dict(source), "metadata": json.loads(source["metadata_json"])},
             "frames": [{**json.loads(row["frame_key_json"]), "png_hash": row["png_hash"]} for row in frames],

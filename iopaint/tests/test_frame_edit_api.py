@@ -1,3 +1,5 @@
+import sqlite3
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -28,7 +30,8 @@ def test_project_frame_and_frame_edit_endpoints(tmp_path, monkeypatch):
 
     monkeypatch.setattr("iopaint.frame_edit_api.extract_canonical_png", extract)
     app = FastAPI()
-    app.include_router(FrameEditApi(ProjectStore(tmp_path)).router)
+    store = ProjectStore(tmp_path)
+    app.include_router(FrameEditApi(store).router)
     client = TestClient(app)
 
     created = client.post(
@@ -39,10 +42,11 @@ def test_project_frame_and_frame_edit_endpoints(tmp_path, monkeypatch):
     assert created.status_code == 200
     project_id = created.json()["project_id"]
     assert created.json()["name"] == "Test project"
+    assert created.json()["durable"] is False
     renamed = client.patch(f"/api/v1/projects/{project_id}", json={"name": "Renamed project"})
     assert renamed.status_code == 200
     assert renamed.json()["name"] == "Renamed project"
-    assert client.get("/api/v1/projects").json()[0]["name"] == "Renamed project"
+    assert client.get("/api/v1/projects").json() == []
     assert client.patch(f"/api/v1/projects/{project_id}", json={"name": "  "}).status_code == 400
     assert client.get(f"/api/v1/projects/{project_id}/frames").json()[0]["pts_ticks"] == "0"
 
@@ -56,6 +60,13 @@ def test_project_frame_and_frame_edit_endpoints(tmp_path, monkeypatch):
         files={"render": ("render.png", b"edited png", "image/png")},
     )
     assert saved.status_code == 200
+    assert client.get("/api/v1/projects").json()[0]["name"] == "Renamed project"
+    assert client.get(f"/api/v1/projects/{project_id}").json()["durable"] is True
+    with sqlite3.connect(store._catalog) as catalog:
+        catalog.execute("UPDATE projects SET activated_at=NULL WHERE id=?", (project_id,))
+    stale_draft_cleanup = client.delete(f"/api/v1/projects/{project_id}?draft_only=true")
+    assert stale_draft_cleanup.json()["deleted"] is False
+    assert client.get(f"/api/v1/projects/{project_id}").status_code == 200
     edit_id = saved.json()["id"]
     assert client.get(f"/api/v1/projects/{project_id}/frame-edits").json()[0]["document"] == {"tool": "erase"}
     reopened = client.get(f"/api/v1/projects/{project_id}/frame-edits/{edit_id}/image")

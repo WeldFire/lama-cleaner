@@ -4,6 +4,7 @@ import type { FrameEdit, FrameKey } from "@/lib/frameEditSession"
 export type VideoProject = {
   id: string
   name: string
+  durable: boolean
   sourceName: string
   frames: FrameKey[]
   frameEdits: FrameEdit[]
@@ -48,6 +49,7 @@ function normalizeProject(payload: unknown): VideoProject {
   return {
     id: stringValue(data.id ?? data.project_id),
     name: stringValue(data.name, "Untitled video project"),
+    durable: Boolean(data.durable ?? rawEdits.length > 0),
     sourceName: stringValue(source.filename ?? data.source_name ?? data.sourceName, "video"),
     frames: rawFrames.map((item, index) => {
       const frame = record(item)
@@ -167,8 +169,12 @@ export async function deleteProjectFrameEdit(projectId: string, editId: string) 
   if (!response.ok) throw new Error(await response.text() || "Unable to delete this frame edit")
 }
 
-export async function deleteVideoProject(projectId: string) {
-  await requireJson(await fetch(`${API_ENDPOINT}/projects/${projectId}`, { method: "DELETE" }))
+export async function deleteVideoProject(projectId: string, keepalive = false) {
+  await requireJson(await fetch(`${API_ENDPOINT}/projects/${projectId}`, { method: "DELETE", keepalive }))
+}
+
+export async function discardDraftVideoProject(projectId: string, keepalive = false) {
+  await requireJson(await fetch(`${API_ENDPOINT}/projects/${projectId}?draft_only=true`, { method: "DELETE", keepalive }))
 }
 
 export async function renameVideoProject(projectId: string, name: string): Promise<VideoProject> {

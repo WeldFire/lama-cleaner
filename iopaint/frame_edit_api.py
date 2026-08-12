@@ -91,13 +91,13 @@ class FrameEditApi:
         finally:
             self.store.close(handle)
 
-    def delete_project(self, project_id: str):
+    def delete_project(self, project_id: str, draft_only: bool = False):
         """Logically delete a project so its data remains recoverable."""
         # Opening first gives callers the same 404 contract as other project
         # operations instead of silently accepting an unknown identifier.
         handle = self._open(project_id, "read")
         self.store.close(handle)
-        return self.store.lifecycle(project_id, "trash")
+        return self.store.lifecycle(project_id, "discard-draft" if draft_only else "trash")
 
     def project_source(self, project_id: str):
         """Stream the immutable project-owned source without requiring re-upload."""

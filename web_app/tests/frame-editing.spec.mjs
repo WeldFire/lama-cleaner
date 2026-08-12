@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process"
+import { Buffer } from "node:buffer"
 import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -65,12 +66,14 @@ test.afterAll(() => rmSync(fixtureDirectory, { recursive: true, force: true }))
 function newBackendState() {
   return {
     project: null,
+    durable: false,
     deleted: false,
     session: { current_ordinal: 0, trim_start_ordinal: 0, trim_end_ordinal: 3 },
     frameEdits: [],
     nextEdit: 1,
     frameEditPosts: 0,
     trimRequests: [],
+    frameImageOrdinals: [],
   }
 }
 
@@ -78,6 +81,7 @@ function rawProject(state) {
   return {
     project_id: "project-1",
     name: state.project?.name || "Untitled video project",
+    durable: state.durable,
     source: { filename: "phase1.webm" },
     frames: [0, 1, 2, 3].map((ordinal) => ({
       presentation_ordinal: ordinal,
@@ -110,12 +114,13 @@ async function installMockBackend(page, state) {
     if (path === "/model") return json(route, model)
     if (path === "/inputimage") return route.fulfill({ status: 404 })
     if (path === "/projects" && method === "GET") {
-      return json(route, state.project && !state.deleted
+      return json(route, state.project && !state.deleted && state.durable
         ? [{ project_id: "project-1", name: state.project.name, updated_at: "2026-08-11T12:00:00Z" }]
         : [])
     }
     if (path === "/projects" && method === "POST") {
       state.project = { name: "Untitled video project" }
+      state.durable = false
       state.deleted = false
       return json(route, rawProject(state))
     }
@@ -125,6 +130,9 @@ async function installMockBackend(page, state) {
       return json(route, rawProject(state))
     }
     if (path === "/projects/project-1" && method === "DELETE") {
+      if (url.searchParams.get("draft_only") === "true" && state.durable) {
+        return json(route, { project_id: "project-1", deleted: false })
+      }
       state.deleted = true
       return json(route, { project_id: "project-1", deleted: true })
     }
@@ -141,10 +149,12 @@ async function installMockBackend(page, state) {
       return json(route, state.session)
     }
     if (/^\/projects\/project-1\/frames\/\d+\/image$/.test(path)) {
+      state.frameImageOrdinals.push(Number(path.match(/frames\/(\d+)/)?.[1]))
       return route.fulfill({ status: 200, contentType: "image/png", body: pngBytes })
     }
     if (path === "/projects/project-1/frame-edits" && method === "POST") {
       state.frameEditPosts += 1
+      state.durable = true
       const multipart = request.postDataBuffer()?.toString("utf8") || ""
       const ordinalMatch = multipart.match(/name="ordinal"\r?\n\r?\n(\d+)/)
       if (!ordinalMatch) throw new Error("Frame-edit upload omitted its canonical ordinal")
@@ -234,6 +244,9 @@ test("project lifecycle survives reload and supports rename, selection, and conf
   await page.getByRole("textbox", { name: "Project name" }).fill("Qualified project")
   await page.getByRole("button", { name: "Save project name" }).click()
   await expect(page.getByRole("button", { name: "Qualified project", exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "Edit frame" }).click()
+  await page.getByRole("button", { name: "Save & return" }).click()
+  await expect(page.getByLabel("Open saved edit for frame 1")).toBeVisible()
 
   await page.reload()
   await expect(page.getByRole("button", { name: "Qualified project", exact: true })).toBeVisible()
@@ -255,6 +268,17 @@ test("project lifecycle survives reload and supports rename, selection, and conf
   expect(state.deleted).toBe(true)
 })
 
+test("an unedited clip is discarded instead of becoming a recent project", async ({ page }) => {
+  const state = newBackendState()
+  await installMockBackend(page, state)
+  await createProjectFromTrimInput(page)
+
+  await page.getByRole("button", { name: /Back to projects/ }).click()
+
+  await expect(page.getByLabel("Recent video projects")).toBeHidden()
+  expect(state.deleted).toBe(true)
+})
+
 test("trim, exact-frame, frame-edit, guard, marker, tray, and downloads round trip", async ({ page }) => {
   const state = newBackendState()
   await installMockBackend(page, state)
@@ -262,6 +286,20 @@ test("trim, exact-frame, frame-edit, guard, marker, tray, and downloads round tr
 
   await page.getByLabel("Next exact frame").click()
   await expect(page.getByText(/Frame 2 \/ 4/)).toBeVisible()
+  await page.getByLabel("Video volume").fill("0.4")
+  await expect(page.getByLabel("Video volume")).toHaveValue("0.4")
+  await expect.poll(() => page.locator("video").evaluate((video) => video.volume)).toBe(0.4)
+  const canonicalDownload = page.waitForEvent("download")
+  await page.getByRole("button", { name: "Save Frame" }).click()
+  const savedCanonicalFrame = await canonicalDownload
+  expect(savedCanonicalFrame.suggestedFilename()).toBe("phase1_frame-2.png")
+  expect(await savedCanonicalFrame.createReadStream().then(async (stream) => {
+    const chunks = []
+    for await (const chunk of stream) chunks.push(chunk)
+    return Buffer.concat(chunks)
+  })).toEqual(pngBytes)
+  expect(state.frameImageOrdinals.at(-1)).toBe(1)
+  await expect(page.getByRole("button", { name: "Edit frame" })).toBeVisible()
   await page.getByLabel("Previous exact frame").click()
   await expect(page.getByText(/Frame 1 \/ 4/)).toBeVisible()
 
