@@ -8,6 +8,8 @@
 
 - [ ] Record exact commands, runtime and dependency versions, platforms, Docker configuration, media-fixture identities, and test results.
 - [ ] Link automated evidence for every Phase 1 acceptance criterion and identify any remaining limitation or waiver.
-- [ ] Record the approved manual QA outcomes from the map, preserving PASS versus SKIPPED status exactly.
-- [ ] Treat the skipped VFR, VP9 WebM, rotated-phone, and audio manual checks as assumed behavior only, never as verified evidence.
-- [ ] State a clear Phase 1 qualified/not-qualified conclusion and the implications for Phase 2 integration.
+- [x] Record the approved manual QA outcomes from the map, preserving PASS versus SKIPPED status exactly.
+- [x] Treat the skipped VFR, VP9 WebM, rotated-phone, and audio manual checks as assumed behavior only, never as verified evidence.
+- [x] State a clear Phase 1 qualified/not-qualified conclusion and the implications for Phase 2 integration.
+
+Final candidate automation and exact runtime inventory are being captured. The report remains a draft until that candidate run is green; the earlier all-green run is supporting evidence only because it predates the final dependency and undo-lifecycle changes.

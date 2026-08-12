@@ -78,6 +78,8 @@ jobs:
       - name: Install Chromium
         working-directory: web_app
         run: npx playwright install chromium
+      - name: Record exact qualification inventory
+        run: python scripts/qualification_inventory.py
       - name: Run approved browser workflow
         working-directory: web_app
         env:

@@ -503,3 +503,22 @@ test("hotkeys are mode-owned and ignore focused inputs", async ({ page }) => {
   await page.getByRole("tab", { name: "Image editing" }).click()
   await expect(page.getByText("Decrease Brush Size", { exact: true })).toBeVisible()
 })
+
+test("undo survives autosave only while the Frame Edit remains active", async ({ page }) => {
+  const state = newBackendState()
+  await installMockBackend(page, state)
+  await createProjectFromTrimInput(page)
+  await page.getByRole("button", { name: "Edit frame" }).click()
+  await drawOnCurrentFrame(page)
+
+  const undo = page.locator("button:has(svg.lucide-undo)")
+  await expect(undo).toBeEnabled()
+  await expect.poll(() => state.frameEditPosts, { timeout: 5_000 }).toBe(1)
+  // Autosave persists the document without remounting the editor, so its
+  // transient undo stack must remain available until this frame is left.
+  await expect(undo).toBeEnabled()
+
+  await page.getByRole("button", { name: "Save & return" }).click()
+  await page.getByLabel("Open saved edit for frame 1").click()
+  await expect(page.locator("button:has(svg.lucide-undo)")).toBeDisabled()
+})

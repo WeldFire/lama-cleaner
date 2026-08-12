@@ -13,6 +13,7 @@ The checked-in Playwright configuration uses one Chromium worker so project life
 - Enter image mode, download the canonical frame, draw an edit, and exercise Keep editing, Discard, and Save guard outcomes.
 - Verify timeline markers and tray entries address the same frame, reopening/replacing does not duplicate an edit, and deletion requires confirmation.
 - Verify focused inputs suppress video navigation, image-only bracket shortcuts do not alter video trim state, and General/Video/Image hotkey tabs expose their respective commands.
+- Verify undo remains available across an in-place autosave, then resets after leaving and reopening the Frame Edit.
 
 ## Verification
 
@@ -24,7 +25,7 @@ $env:PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH='C:\Users\Administrator\AppData\Local\m
 npm.cmd run test:e2e:frame-editing
 ```
 
-Result on 2026-08-11: **3 passed** (the real-Docker scenario is skipped unless explicitly enabled).
+Result on 2026-08-12: **5 passed** before the undo-lifecycle scenario was added. The final candidate matrix runs all six isolated scenarios (the real-Docker scenario remains separately gated).
 
 Real Docker persistence and restart command (this intentionally restarts the Compose `app` service and deletes only the uniquely named project it creates):
 
@@ -33,12 +34,12 @@ $env:FRAME_EDIT_E2E_REAL_DOCKER='1'
 npx.cmd playwright test --config playwright.config.mjs --grep '@docker'
 ```
 
-Result on 2026-08-11, run together with the isolated scenarios: **4 passed (16.9s)**; the Docker scenario itself completed in 9.6s. The test creates and renames a project through the browser, saves a Frame Edit using the real API/assets/SQLite store, restarts the application container, reloads the browser, verifies the project and marker recover from the persistent volume, and confirms project deletion.
+Result on 2026-08-12: **1 passed**. The test creates and renames a project through the browser, saves a Frame Edit using the real API/assets/SQLite store, replaces the model and frontend dependency volumes, force-recreates the application and frontend containers, reloads the browser, verifies source/session/document/mask/relink recovery from the retained project volume, proves that volume remains writable, and confirms project deletion.
 
 Supporting checks:
 
 - `npm.cmd exec tsc -- --noEmit` — passed.
-- `npm.cmd run test:frame-session` — 5 passed.
+- `npm.cmd run test:frame-session` — 6 passed.
 - `node --check playwright.config.mjs` and `node --check tests/frame-editing.spec.mjs` — passed.
 
 ## Boundary
