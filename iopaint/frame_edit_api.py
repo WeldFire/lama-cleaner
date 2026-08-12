@@ -23,6 +23,7 @@ class FrameEditApi:
         self.router = APIRouter(prefix="/api/v1/projects", tags=["frame editing"])
         self.router.add_api_route("", self.create_project, methods=["POST"])
         self.router.add_api_route("", self.list_projects, methods=["GET"])
+        self.router.add_api_route("/recovery/status", self.list_recovery_projects, methods=["GET"])
         self.router.add_api_route("/{project_id}", self.get_project, methods=["GET"])
         self.router.add_api_route("/{project_id}", self.rename_project, methods=["PATCH"])
         self.router.add_api_route("/{project_id}", self.delete_project, methods=["DELETE"])
@@ -84,7 +85,16 @@ class FrameEditApi:
     def list_projects(self):
         return self.store.lifecycle(None, "list")
 
-    def get_project(self, project_id: str):
+    def list_recovery_projects(self):
+        return self.store.lifecycle(None, "recovery")
+
+    def get_project(self, project_id: str, takeover: bool = False):
+        if takeover:
+            handle = self._open(project_id, "write", takeover=True)
+            try:
+                return self.store.project_snapshot(handle)
+            finally:
+                self.store.close(handle)
         return self._snapshot(project_id)
 
     def rename_project(self, project_id: str, payload: dict = Body(...)):
@@ -337,12 +347,21 @@ class FrameEditApi:
     def _snapshot(self, project_id: str):
         handle = self._open(project_id, "read")
         try:
+            if handle.recovery_reason:
+                return {
+                    "project_id": project_id,
+                    "read_only": True,
+                    "recovery_required": True,
+                    "recovery_reason": handle.recovery_reason,
+                }
             return self.store.project_snapshot(handle)
         finally:
             self.store.close(handle)
 
-    def _open(self, project_id: str, intent: str):
+    def _open(self, project_id: str, intent: str, takeover: bool = False):
         try:
-            return self.store.open(project_id, intent)
+            return self.store.open(project_id, intent, takeover=takeover)
         except FileNotFoundError as error:
             raise HTTPException(status_code=404, detail="Project not found") from error
+        except PermissionError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error

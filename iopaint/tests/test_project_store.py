@@ -82,16 +82,224 @@ def test_project_store_commits_assets_before_metadata_and_reopens(tmp_path):
 
 
 def test_new_writer_fences_previous_handle(tmp_path):
-    store = ProjectStore(tmp_path)
-    previous = store.open()
-    current = store.open(previous.project_id)
+    previous_store = ProjectStore(tmp_path, instance_id="previous")
+    previous = previous_store.open()
+    current_store = ProjectStore(tmp_path, instance_id="current")
+    with pytest.raises(PermissionError, match="actively leased"):
+        current_store.open(previous.project_id)
+    current = current_store.open(previous.project_id, takeover=True)
 
     with pytest.raises(PermissionError, match="fenced"):
-        store.transact(previous, ProjectMutation("replace_frames", {"frames": []}))
+        previous_store.transact(previous, ProjectMutation("replace_frames", {"frames": []}))
 
-    assert store.transact(current, ProjectMutation("replace_frames", {"frames": []})) == 1
-    store.close(previous)
-    store.close(current)
+    assert current_store.transact(current, ProjectMutation("replace_frames", {"frames": []})) == 1
+    previous_store.close(previous)
+    current_store.close(current)
+
+
+def test_writer_lease_heartbeat_abandonment_takeover_and_restart(tmp_path):
+    now = [1000.0]
+    first_store = ProjectStore(tmp_path, instance_id="first", clock=lambda: now[0])
+    first = first_store.open()
+    project_id = first.project_id
+    lease = json.loads((first.path / "writer-lease.json").read_text())
+    assert lease["instance_id"] == "first"
+    assert lease["fencing_token"] == first.fencing_token
+    first_store.heartbeat(first)
+    now[0] += 29
+    second_store = ProjectStore(tmp_path, instance_id="second", clock=lambda: now[0])
+    with pytest.raises(PermissionError, match="actively leased"):
+        second_store.open(project_id)
+
+    now[0] += 2
+    second = second_store.open(project_id)
+    with pytest.raises(PermissionError, match="fenced"):
+        first_store.heartbeat(first)
+    with pytest.raises(PermissionError, match="fenced"):
+        first_store.transact(first, ProjectMutation("replace_frames", {"frames": []}))
+    second_store.heartbeat(second)
+    first_store.close(first)
+    second_store.close(second)
+
+    # Close releases the lease, so a third process acquires immediately without
+    # waiting for the old expiry while still receiving a newer fencing token.
+    third_store = ProjectStore(tmp_path, instance_id="third", clock=lambda: now[0])
+    third = third_store.open(project_id)
+    assert third.fencing_token > second.fencing_token
+    third_store.close(third)
+
+
+def test_simultaneous_lease_acquisition_has_one_winner(tmp_path):
+    creator = ProjectStore(tmp_path, instance_id="creator")
+    created = creator.open()
+    project_id = created.project_id
+    creator.close(created)
+    barrier = threading.Barrier(2)
+    release_winner = threading.Event()
+    results = []
+
+    def acquire(instance_id):
+        candidate = ProjectStore(tmp_path, instance_id=instance_id)
+        barrier.wait()
+        try:
+            handle = candidate.open(project_id)
+            results.append(("won", handle.fencing_token))
+            release_winner.wait(timeout=3)
+            candidate.close(handle)
+        except PermissionError:
+            results.append(("lost", None))
+
+    threads = [threading.Thread(target=acquire, args=(name,)) for name in ("one", "two")]
+    for thread in threads: thread.start()
+    while len(results) < 2:
+        time.sleep(0.01)
+    assert sorted(result[0] for result in results) == ["lost", "won"]
+    release_winner.set()
+    for thread in threads: thread.join(timeout=3)
+
+
+def test_paused_lease_publication_cannot_overwrite_confirmed_takeover(tmp_path):
+    pause = threading.Event()
+    allow_publish = threading.Event()
+
+    def first_hook(boundary):
+        if boundary == "lease:file:before":
+            pause.set()
+            assert allow_publish.wait(timeout=3)
+
+    first_store = ProjectStore(tmp_path, instance_id="first", fault_hook=first_hook)
+    creator_store = ProjectStore(tmp_path, instance_id="creator")
+    created = creator_store.open()
+    project_id = created.project_id
+    creator_store.close(created)
+    first_result = []
+
+    def first_acquire():
+        handle = first_store.open(project_id)
+        first_result.append(handle.fencing_token)
+        first_store.close(handle)
+
+    thread = threading.Thread(target=first_acquire)
+    thread.start()
+    assert pause.wait(timeout=3)
+    takeover_store = ProjectStore(tmp_path, instance_id="takeover")
+    takeover = takeover_store.open(project_id, takeover=True)
+    allow_publish.set()
+    thread.join(timeout=3)
+    lease = json.loads((takeover.path / "writer-lease.json").read_text())
+    assert lease["instance_id"] == "takeover"
+    assert lease["fencing_token"] == takeover.fencing_token
+    takeover_store.close(takeover)
+
+
+def test_supported_schema_migrates_with_backup_and_unsupported_schema_is_read_only(tmp_path):
+    store = ProjectStore(tmp_path)
+    handle = store.open(name="Migration")
+    project_id = handle.project_id
+    database = handle.path / "project.sqlite"
+    store.transact(handle, ProjectMutation(
+        "save_frame_edit", {"id": "edit", "ordinal": 0, "document": {}}, {"render": b"render"},
+    ))
+    handle.connection.execute("UPDATE metadata SET value='1' WHERE key='schema_version'")
+    handle.connection.commit()
+    store.close(handle)
+
+    migrated_store = ProjectStore(tmp_path, instance_id="migrator")
+    migrated = migrated_store.open(project_id, "write")
+    assert migrated.connection.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()[0] == "2"
+    assert (migrated.path / "backups" / "schema-1.sqlite").exists()
+    assert (migrated.path / "backups" / "schema-1.manifest.json").exists()
+    assert migrated.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    migrated_store.close(migrated)
+
+    connection = sqlite3.connect(database)
+    connection.execute("UPDATE metadata SET value='999' WHERE key='schema_version'")
+    connection.commit()
+    before_metadata = [tuple(row) for row in connection.execute("SELECT key,value FROM metadata ORDER BY key").fetchall()]
+    connection.close()
+    newer_store = ProjectStore(tmp_path)
+    newer = newer_store.open(project_id, "write")
+    assert newer.read_only is True
+    assert "newer than supported" in newer.recovery_reason
+    assert [tuple(row) for row in newer.connection.execute("SELECT key,value FROM metadata ORDER BY key").fetchall()] == before_metadata
+    with pytest.raises(PermissionError, match="read-only"):
+        newer_store.transact(newer, ProjectMutation("replace_frames", {"frames": []}))
+    newer_store.close(newer)
+
+
+def test_active_foreign_lease_blocks_schema_migration(tmp_path):
+    owner_store = ProjectStore(tmp_path, instance_id="owner")
+    owner = owner_store.open()
+    project_id = owner.project_id
+    owner.connection.execute("UPDATE metadata SET value='1' WHERE key='schema_version'")
+    owner.connection.commit()
+    contender = ProjectStore(tmp_path, instance_id="contender")
+    with pytest.raises(PermissionError, match="actively leased"):
+        contender.open(project_id, "write")
+    assert owner.connection.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()[0] == "1"
+    owner_store.close(owner)
+
+
+def test_corrupt_project_opens_explicit_read_only_recovery_without_mutation(tmp_path):
+    store = ProjectStore(tmp_path)
+    handle = store.open()
+    project_id = handle.project_id
+    database = handle.path / "project.sqlite"
+    store.close(handle)
+    database.write_bytes(b"broken sqlite")
+    before = database.read_bytes()
+
+    recovery_store = ProjectStore(tmp_path)
+    recovery = recovery_store.open(project_id, "write")
+    assert recovery.read_only is True
+    assert "corrupt" in recovery.recovery_reason.lower()
+    assert database.read_bytes() == before
+    with pytest.raises(PermissionError, match="read-only"):
+        recovery_store.transact(recovery, ProjectMutation("replace_frames", {"frames": []}))
+    recovery_store.close(recovery)
+
+
+@pytest.mark.parametrize("boundary", ["lease:heartbeat:before", "lease:heartbeat:after-metadata", "lease:file:before", "lease:file:after"])
+def test_lease_transition_fault_recovers_by_expiry_and_fences_stale_writer(tmp_path, boundary):
+    now = [1000.0]
+    fault = FaultAt(boundary)
+    store = ProjectStore(tmp_path, fault_hook=fault, instance_id="first", clock=lambda: now[0])
+    handle = store.open()
+    project_id = handle.project_id
+    fault.armed = True
+    with pytest.raises(RuntimeError):
+        store.heartbeat(handle)
+    now[0] += 31
+    takeover = ProjectStore(tmp_path, instance_id="second", clock=lambda: now[0])
+    current = takeover.open(project_id)
+    with pytest.raises(PermissionError, match="fenced"):
+        store.transact(handle, ProjectMutation("replace_frames", {"frames": []}))
+    takeover.transact(current, ProjectMutation("replace_frames", {"frames": []}))
+    store.close(handle)
+    takeover.close(current)
+
+
+@pytest.mark.parametrize("boundary", ["migration:backup:before", "migration:backup:after", "migration:transaction:before", "migration:transaction:after"])
+def test_migration_fault_retains_valid_prior_or_new_schema(tmp_path, boundary):
+    store = ProjectStore(tmp_path)
+    handle = store.open()
+    project_id = handle.project_id
+    store.transact(handle, ProjectMutation(
+        "save_frame_edit", {"id": "edit", "ordinal": 0, "document": {}}, {"render": b"render"},
+    ))
+    handle.connection.execute("UPDATE metadata SET value='1' WHERE key='schema_version'")
+    handle.connection.commit()
+    store.close(handle)
+    fault = FaultAt(boundary)
+    fault.armed = True
+    interrupted = ProjectStore(tmp_path, fault_hook=fault)
+    with pytest.raises(RuntimeError):
+        interrupted.open(project_id, "write")
+    recovered = ProjectStore(tmp_path)
+    reopened = recovered.open(project_id, "write", takeover=True)
+    assert reopened.connection.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()[0] == "2"
+    assert reopened.connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    recovered.close(reopened)
 
 
 def test_frame_edit_is_logically_deleted_and_assets_remain(tmp_path):

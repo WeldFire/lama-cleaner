@@ -16,8 +16,9 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 ORPHAN_GRACE_SECONDS = 24 * 60 * 60
+LEASE_SECONDS = 30
 
 
 def default_project_data_dir() -> Path:
@@ -42,6 +43,7 @@ class ProjectHandle:
     connection: sqlite3.Connection
     fencing_token: int
     read_only: bool = False
+    recovery_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -54,7 +56,7 @@ class ProjectMutation:
 class ProjectStore:
     """Own project SQLite, immutable assets, revisions, and lifecycle state."""
 
-    def __init__(self, root: Path | None = None, fault_hook: Callable[[str], None] | None = None):
+    def __init__(self, root: Path | None = None, fault_hook: Callable[[str], None] | None = None, *, instance_id: str | None = None, clock: Callable[[], float] | None = None):
         self.root = (root or default_project_data_dir()).resolve()
         self.projects_dir = self.root / "projects"
         self.projects_dir.mkdir(parents=True, exist_ok=True)
@@ -62,6 +64,8 @@ class ProjectStore:
         self._project_locks: dict[str, threading.RLock] = {}
         self._project_locks_guard = threading.Lock()
         self._fault_hook = fault_hook or (lambda boundary: None)
+        self._instance_id = instance_id or str(uuid.uuid4())
+        self._clock = clock or (lambda: datetime.now(timezone.utc).timestamp())
         with sqlite3.connect(self._catalog) as connection:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute(
@@ -83,13 +87,19 @@ class ProjectStore:
                 project_database = self.projects_dir / project_id / "project.sqlite"
                 activated = None
                 if project_database.exists():
-                    project = sqlite3.connect(project_database)
                     try:
+                        project = sqlite3.connect(project_database)
                         activated = project.execute(
                             "SELECT value FROM metadata WHERE key='activated_at'"
                         ).fetchone()
+                    except sqlite3.DatabaseError:
+                        # Recovery audit will classify the project; never treat
+                        # unreadable metadata as proof that a draft is disposable.
+                        activated = ("recovery-pending",)
                     finally:
-                        project.close()
+                        if "project" in locals():
+                            project.close()
+                            del project
                 if activated:
                     connection.execute(
                         "UPDATE projects SET activated_at=? WHERE id=?",
@@ -111,6 +121,7 @@ class ProjectStore:
         access_intent: str = "write",
         *,
         name: str = "Untitled video project",
+        takeover: bool = False,
     ) -> ProjectHandle:
         if project_locator is None:
             project_id = str(uuid.uuid4())
@@ -128,8 +139,10 @@ class ProjectStore:
         project_path.mkdir(parents=True, exist_ok=True)
         for child in ("assets", "cache", "tmp"):
             (project_path / child).mkdir(exist_ok=True)
-        connection = sqlite3.connect(project_path / "project.sqlite")
+        database_path = project_path / "project.sqlite"
+        connection = sqlite3.connect(database_path)
         connection.row_factory = sqlite3.Row
+        lease_acquired = False
         if creating:
             try:
                 self._fault_hook("creation:metadata:before")
@@ -137,12 +150,37 @@ class ProjectStore:
                 connection.close()
                 shutil.rmtree(project_path)
                 raise
+        # Compatibility is probed without mutation. Only supported schemas may
+        # acquire a lease; the version is re-read under that lease by migration.
+        if not creating:
+            try:
+                schema_row = connection.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()
+                probed_version = int(schema_row[0]) if schema_row else 0
+            except (sqlite3.DatabaseError, TypeError, ValueError) as error:
+                connection.close()
+                read_only = sqlite3.connect(f"file:{database_path.as_posix()}?mode=ro", uri=True)
+                read_only.row_factory = sqlite3.Row
+                return ProjectHandle(project_id, project_path, read_only, 0, True, f"Project metadata is incomplete or corrupt: {error}")
+            if probed_version > SCHEMA_VERSION:
+                connection.close()
+                read_only = sqlite3.connect(f"file:{database_path.as_posix()}?mode=ro", uri=True)
+                read_only.row_factory = sqlite3.Row
+                return ProjectHandle(project_id, project_path, read_only, 0, True, f"Project schema {probed_version} is newer than supported schema {SCHEMA_VERSION}; opened read-only")
+        if not creating and access_intent != "read":
+            token = self._acquire_lease(connection, takeover)
+            lease_acquired = True
+            self._write_lease(project_path, token)
+        recovery_reason = self._prepare_schema(connection, project_path, project_id, creating, access_intent)
+        if recovery_reason:
+            connection.close()
+            read_only = sqlite3.connect(f"file:{database_path.as_posix()}?mode=ro", uri=True)
+            read_only.row_factory = sqlite3.Row
+            return ProjectHandle(project_id, project_path, read_only, 0, True, recovery_reason)
         self._initialize(connection, project_id)
         token = int(connection.execute("SELECT value FROM metadata WHERE key='fencing_token'").fetchone()[0])
-        if access_intent != "read":
-            token += 1
-            connection.execute("UPDATE metadata SET value=? WHERE key='fencing_token'", (str(token),))
-            connection.commit()
+        if access_intent != "read" and not lease_acquired:
+            token = self._acquire_lease(connection, takeover)
+            self._write_lease(project_path, token)
         if creating:
             try:
                 self._fault_hook("creation:metadata:after")
@@ -176,9 +214,6 @@ class ProjectStore:
             if handle.read_only:
                 raise PermissionError("Project is open read-only")
             connection = handle.connection
-            current_token = int(connection.execute("SELECT value FROM metadata WHERE key='fencing_token'").fetchone()[0])
-            if current_token != handle.fencing_token:
-                raise PermissionError("This writer has been fenced by a newer project session")
             asset_hashes = {
                 name: self._ingest_asset(handle.path, data, name)
                 for name, data in (mutation.assets or {}).items()
@@ -186,10 +221,19 @@ class ProjectStore:
             payload = dict(mutation.payload)
             payload["assets"] = asset_hashes
             self._fault_hook("metadata:before")
-            with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                current_token = int(connection.execute("SELECT value FROM metadata WHERE key='fencing_token'").fetchone()[0])
+                owner = connection.execute("SELECT value FROM metadata WHERE key='lease_owner'").fetchone()
+                if current_token != handle.fencing_token or not owner or owner[0] != self._instance_id:
+                    raise PermissionError("This writer has been fenced by a newer project session")
                 revision = int(connection.execute("SELECT value FROM metadata WHERE key='revision'").fetchone()[0]) + 1
                 self._apply_mutation(connection, mutation.kind, payload)
                 connection.execute("UPDATE metadata SET value=? WHERE key='revision'", (str(revision),))
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
             self._fault_hook("metadata:after")
             self._fault_hook("catalog:before")
             with sqlite3.connect(self._catalog) as catalog:
@@ -274,7 +318,136 @@ class ProjectStore:
             return {"project_id": project_id, "deleted": command == "trash"}
 
     def close(self, handle: ProjectHandle) -> None:
+        if not handle.read_only:
+            try:
+                handle.connection.execute("BEGIN IMMEDIATE")
+                owner = handle.connection.execute("SELECT value FROM metadata WHERE key='lease_owner'").fetchone()
+                token = int(handle.connection.execute("SELECT value FROM metadata WHERE key='fencing_token'").fetchone()[0])
+                if owner and owner[0] == self._instance_id and token == handle.fencing_token:
+                    handle.connection.execute("DELETE FROM metadata WHERE key IN ('lease_owner','lease_expires_at')")
+                handle.connection.commit()
+            except sqlite3.DatabaseError:
+                handle.connection.rollback()
         handle.connection.close()
+
+    def heartbeat(self, handle: ProjectHandle) -> None:
+        """Renew the current instance lease without changing its fencing token."""
+        if handle.read_only:
+            raise PermissionError("Read-only projects do not own writer leases")
+        self._fault_hook("lease:heartbeat:before")
+        handle.connection.execute("BEGIN IMMEDIATE")
+        try:
+            owner = handle.connection.execute("SELECT value FROM metadata WHERE key='lease_owner'").fetchone()
+            token = int(handle.connection.execute("SELECT value FROM metadata WHERE key='fencing_token'").fetchone()[0])
+            if not owner or owner[0] != self._instance_id or token != handle.fencing_token:
+                raise PermissionError("This writer lease has been fenced")
+            handle.connection.execute(
+                "INSERT OR REPLACE INTO metadata(key,value) VALUES('lease_expires_at',?)",
+                (str(self._clock() + LEASE_SECONDS),),
+            )
+            handle.connection.commit()
+        except Exception:
+            handle.connection.rollback()
+            raise
+        self._fault_hook("lease:heartbeat:after-metadata")
+        self._write_lease(handle.path, handle.fencing_token)
+
+    def _acquire_lease(self, connection: sqlite3.Connection, takeover: bool) -> int:
+        self._fault_hook("lease:acquire:before")
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            token = int(connection.execute("SELECT value FROM metadata WHERE key='fencing_token'").fetchone()[0])
+            lease_owner = connection.execute("SELECT value FROM metadata WHERE key='lease_owner'").fetchone()
+            lease_expiry = connection.execute("SELECT value FROM metadata WHERE key='lease_expires_at'").fetchone()
+            active_other = lease_owner and lease_owner[0] != self._instance_id and lease_expiry and float(lease_expiry[0]) > self._clock()
+            if active_other and not takeover:
+                raise PermissionError("Project is actively leased by another writer; reopen read-only or confirm takeover")
+            if not lease_owner or lease_owner[0] != self._instance_id:
+                token += 1
+            connection.executemany("INSERT OR REPLACE INTO metadata(key,value) VALUES(?,?)", (
+                ("fencing_token", str(token)), ("lease_owner", self._instance_id),
+                ("lease_expires_at", str(self._clock() + LEASE_SECONDS)),
+            ))
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        self._fault_hook("lease:acquire:after")
+        return token
+
+    def _prepare_schema(self, connection: sqlite3.Connection, project_path: Path, project_id: str, creating: bool, access_intent: str) -> str | None:
+        if creating:
+            return None
+        try:
+            row = connection.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()
+            version = int(row[0]) if row else 0
+        except (sqlite3.DatabaseError, TypeError, ValueError) as error:
+            return f"Project metadata is incomplete or corrupt: {error}"
+        if version > SCHEMA_VERSION:
+            return f"Project schema {version} is newer than supported schema {SCHEMA_VERSION}; opened read-only"
+        if version < SCHEMA_VERSION:
+            if access_intent == "read":
+                return f"Project schema {version} requires migration; reopen with write access to migrate safely"
+            backup = project_path / "backups" / f"schema-{version}.sqlite"
+            backup.parent.mkdir(exist_ok=True)
+            self._fault_hook("migration:backup:before")
+            backup_connection = sqlite3.connect(backup)
+            connection.backup(backup_connection)
+            backup_connection.close()
+            manifest = project_path / "manifest.json"
+            if manifest.exists():
+                shutil.copy2(manifest, backup.with_suffix(".manifest.json"))
+            self._fault_hook("migration:backup:after")
+            try:
+                self._fault_hook("migration:transaction:before")
+                with connection:
+                    connection.execute("UPDATE metadata SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),))
+                    connection.execute("CREATE TABLE IF NOT EXISTS schema_history(from_version INTEGER,to_version INTEGER,migrated_at TEXT)")
+                    connection.execute("INSERT INTO schema_history VALUES(?,?,?)", (version, SCHEMA_VERSION, _now()))
+                self._fault_hook("migration:transaction:after")
+                if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                    raise sqlite3.DatabaseError("Post-migration SQLite integrity audit failed")
+                referenced = [row[0] for query in (
+                    "SELECT asset_hash FROM sources", "SELECT png_hash FROM frames WHERE png_hash IS NOT NULL",
+                    "SELECT render_hash FROM frame_edits WHERE render_hash IS NOT NULL", "SELECT mask_hash FROM frame_edits WHERE mask_hash IS NOT NULL",
+                ) for row in connection.execute(query)]
+                if any(
+                    not (project_path / "assets" / digest[:2] / digest).exists()
+                    or hashlib.sha256((project_path / "assets" / digest[:2] / digest).read_bytes()).hexdigest() != digest
+                    for digest in referenced
+                ):
+                    raise IOError("Post-migration asset integrity audit failed")
+            except Exception:
+                connection.close()
+                for suffix in ("-wal", "-shm"):
+                    (project_path / f"project.sqlite{suffix}").unlink(missing_ok=True)
+                restored = sqlite3.connect(project_path / "project.sqlite")
+                backup_connection = sqlite3.connect(backup)
+                backup_connection.backup(restored)
+                backup_connection.close()
+                restored.close()
+                raise
+        return None
+
+    def _write_lease(self, project_path: Path, token: int) -> None:
+        self._fault_hook("lease:file:before")
+        temporary = project_path / "tmp" / f"writer-lease.{self._instance_id}.{token}.{uuid.uuid4().hex}.tmp"
+        payload = {"instance_id": self._instance_id, "fencing_token": token, "expires_at": self._clock() + LEASE_SECONDS}
+        temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        verification = sqlite3.connect(project_path / "project.sqlite")
+        try:
+            verification.execute("BEGIN IMMEDIATE")
+            owner = verification.execute("SELECT value FROM metadata WHERE key='lease_owner'").fetchone()
+            current_token = int(verification.execute("SELECT value FROM metadata WHERE key='fencing_token'").fetchone()[0])
+            if not owner or owner[0] != self._instance_id or current_token != token:
+                verification.rollback()
+                temporary.unlink(missing_ok=True)
+                return
+            os.replace(temporary, project_path / "writer-lease.json")
+            verification.commit()
+        finally:
+            verification.close()
+        self._fault_hook("lease:file:after")
 
     def _recover_projects(self) -> None:
         """Audit durable project state and repair derived catalog/manifest files."""

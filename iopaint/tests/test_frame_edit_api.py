@@ -1,12 +1,13 @@
 import json
 import sqlite3
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from iopaint.frame_edit_api import FrameEditApi
 from iopaint.frame_media import legacy_source_fingerprint
-from iopaint.project_store import ProjectStore
+from iopaint.project_store import ProjectMutation, ProjectStore
 
 
 def test_project_frame_and_frame_edit_endpoints(tmp_path, monkeypatch):
@@ -195,3 +196,22 @@ def test_project_frame_and_frame_edit_endpoints(tmp_path, monkeypatch):
     assert deleted_project.json() == {"project_id": project_id, "deleted": True}
     assert all(item["id"] != project_id for item in client.get("/api/v1/projects").json())
     assert client.delete("/api/v1/projects/missing").status_code == 404
+
+
+def test_confirmed_takeover_is_exposed_by_project_api(tmp_path):
+    owner_store = ProjectStore(tmp_path, instance_id="owner")
+    owner = owner_store.open(name="Leased project")
+    owner_store.transact(owner, ProjectMutation(
+        "save_frame_edit", {"id": "edit", "ordinal": 0, "document": {}}, {"render": b"render"},
+    ))
+    project_id = owner.project_id
+    api_store = ProjectStore(tmp_path, instance_id="api")
+    app = FastAPI()
+    app.include_router(FrameEditApi(api_store).router)
+    client = TestClient(app)
+
+    blocked = client.get(f"/api/v1/projects/{project_id}?takeover=true")
+    assert blocked.status_code == 200
+    with pytest.raises(PermissionError, match="fenced"):
+        owner_store.transact(owner, ProjectMutation("replace_frames", {"frames": []}))
+    owner_store.close(owner)

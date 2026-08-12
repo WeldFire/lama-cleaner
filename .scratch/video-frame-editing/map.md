@@ -75,7 +75,7 @@ Dependency graph:
 - [Persist resumable Frame Edit documents](issues/23-persist-resumable-frame-edit-documents.md) — Resolved: atomic versioned documents retain canonical identity, composite masks, geometry, tools, operation snapshots, and snapshot-safe autosave across reopen/restart.
 - [Relink moved sources and quarantine mismatches](issues/24-relink-sources-and-quarantine-mismatches.md) — Resolved: typed relink recovery uses layered fingerprints, audits matches/mismatches, preserves project work, and atomically upgrades legacy identities.
 - [Fault-test atomic project commits](issues/25-fault-test-atomic-project-commits.md) — Resolved: deterministic creation/asset/SQLite/catalog/manifest/cleanup faults recover coherent revisions; restart audits SQLite and asset hashes and quarantines damage.
-- [Qualify migrations, read-only recovery, and writer leases](issues/26-qualify-migrations-recovery-and-writer-leases.md) — Blocked by 25.
+- [Qualify migrations, read-only recovery, and writer leases](issues/26-qualify-migrations-recovery-and-writer-leases.md) — Resolved: transactional backup migrations, true read-only recovery, atomic renewable leases, confirmed takeover, and owner+token fencing are qualified.
 - [Qualify native and Docker project workflows](issues/27-qualify-native-and-docker-project-workflows.md) — Blocked by 21–26.
 - [Publish the Phase 1 qualification report](issues/28-publish-phase1-qualification-report.md) — Blocked by 20–27.
 - [Add video frame actions and lazy project persistence](issues/29-add-video-frame-actions-and-lazy-projects.md) — Resolved: volume and canonical Save Frame controls ship with draft projects promoted only by their first saved Frame Edit.
