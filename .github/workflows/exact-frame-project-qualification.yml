@@ -61,12 +61,9 @@ jobs:
       - name: Install Chromium
         working-directory: web_app
         run: npx playwright install chromium
-      - name: Start native frontend
-        working-directory: web_app
-        shell: bash
-        run: npm run dev -- --host 127.0.0.1 --port 8088 > ../vite.log 2>&1 &
       - name: Run approved browser workflow
         working-directory: web_app
         env:
           FRAME_EDIT_E2E_BASE_URL: http://127.0.0.1:8088
+          FRAME_EDIT_E2E_START_SERVER: "1"
         run: npx playwright test tests/frame-editing.spec.mjs --config playwright.config.mjs

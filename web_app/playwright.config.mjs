@@ -11,7 +11,15 @@ export default defineConfig({
   retries: 0,
   timeout: 45_000,
   expect: { timeout: 8_000 },
-  reporter: [["list"]],
+  reporter: process.env.GITHUB_ACTIONS ? [["github"], ["list"]] : [["list"]],
+  webServer: process.env.FRAME_EDIT_E2E_START_SERVER
+    ? {
+        command: "npm run dev -- --host 127.0.0.1 --port 8088",
+        url: "http://127.0.0.1:8088",
+        reuseExistingServer: true,
+        timeout: 120_000,
+      }
+    : undefined,
   use: {
     actionTimeout: 8_000,
     baseURL: process.env.FRAME_EDIT_E2E_BASE_URL || "http://127.0.0.1:8088",
