@@ -247,9 +247,13 @@ test("project lifecycle survives reload and supports rename, selection, and conf
   await page.getByRole("button", { name: "Edit frame" }).click()
   await page.getByRole("button", { name: "Save & return" }).click()
   await expect(page.getByLabel("Open saved edit for frame 1")).toBeVisible()
+  await page.getByLabel("Video volume").fill("0.35")
+  await page.getByLabel("Mute video").click()
 
   await page.reload()
   await expect(page.getByRole("button", { name: "Qualified project", exact: true })).toBeVisible()
+  await expect(page.getByLabel("Video volume")).toHaveValue("0.35")
+  await expect(page.getByLabel("Unmute video")).toBeVisible()
   const restartedPage = await page.context().newPage()
   await installMockBackend(restartedPage, state)
   await restartedPage.goto("/", { waitUntil: "domcontentloaded" })
@@ -289,6 +293,20 @@ test("trim, exact-frame, frame-edit, guard, marker, tray, and downloads round tr
   await page.getByLabel("Video volume").fill("0.4")
   await expect(page.getByLabel("Video volume")).toHaveValue("0.4")
   await expect.poll(() => page.locator("video").evaluate((video) => video.volume)).toBe(0.4)
+  await page.getByLabel("Mute video").click()
+  await expect(page.getByLabel("Unmute video")).toBeVisible()
+  await expect.poll(() => page.locator("video").evaluate((video) => video.muted)).toBe(true)
+  expect(await page.evaluate(() => ({
+    volume: localStorage.getItem("iopaint.video-volume"),
+    muted: localStorage.getItem("iopaint.video-muted"),
+  }))).toEqual({ volume: "0.4", muted: "true" })
+  await page.getByLabel("Unmute video").click()
+  await expect.poll(() => page.locator("video").evaluate((video) => video.muted)).toBe(false)
+  await expect(page.getByLabel("Video volume")).toHaveValue("0.4")
+  await page.getByLabel("Video volume").fill("0")
+  await expect(page.getByLabel("Unmute video")).toBeVisible()
+  await page.getByLabel("Unmute video").click()
+  await expect(page.getByLabel("Video volume")).toHaveValue("0.4")
   const canonicalDownload = page.waitForEvent("download")
   await page.getByRole("button", { name: "Save Frame" }).click()
   const savedCanonicalFrame = await canonicalDownload

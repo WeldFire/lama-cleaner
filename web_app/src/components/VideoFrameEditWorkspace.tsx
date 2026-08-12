@@ -33,6 +33,13 @@ const PRECISE_SEEK_DELAY_MS = 500
 const PREVIEW_SEEK_INTERVAL_MS = 100
 const LARGE_DRAG_FRACTION = 0.1
 const FAST_PREVIEW_STEP_SECONDS = 0.25
+const VIDEO_VOLUME_KEY = "iopaint.video-volume"
+const VIDEO_MUTED_KEY = "iopaint.video-muted"
+
+const storedVideoVolume = () => {
+  const stored = Number(localStorage.getItem(VIDEO_VOLUME_KEY))
+  return Number.isFinite(stored) && stored >= 0 && stored <= 1 ? stored : 1
+}
 
 const formatTimecode = (seconds: number) => {
   const milliseconds = Math.round(seconds * 1000)
@@ -80,7 +87,9 @@ export default function VideoFrameEditWorkspace({
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState("")
   const [playing, setPlaying] = useState(false)
-  const [volume, setVolume] = useState(1)
+  const [volume, setVolume] = useState(storedVideoVolume)
+  const [muted, setMuted] = useState(() => localStorage.getItem(VIDEO_MUTED_KEY) === "true")
+  const lastAudibleVolumeRef = useRef(volume > 0 ? volume : 1)
   const setFile = useStore((state) => state.setFile)
   const getCurrentTargetFile = useStore((state) => state.getCurrentTargetFile)
   const editActivity = useStore((state) =>
@@ -117,6 +126,25 @@ export default function VideoFrameEditWorkspace({
   const projectLifecycleRef = useRef<{ id: string; durable: boolean } | null>(null)
 
   useEffect(() => () => URL.revokeObjectURL(source), [source])
+
+  useEffect(() => {
+    if (volume > 0) lastAudibleVolumeRef.current = volume
+    localStorage.setItem(VIDEO_VOLUME_KEY, String(volume))
+    localStorage.setItem(VIDEO_MUTED_KEY, String(muted))
+    if (videoRef.current) {
+      videoRef.current.volume = volume
+      videoRef.current.muted = muted
+    }
+  }, [muted, volume])
+
+  const toggleMuted = () => {
+    if (muted || volume === 0) {
+      if (volume === 0) setVolume(lastAudibleVolumeRef.current)
+      setMuted(false)
+    } else {
+      setMuted(true)
+    }
+  }
 
   useEffect(() => {
     trimStartRef.current = session.trimStartOrdinal
@@ -589,7 +617,7 @@ export default function VideoFrameEditWorkspace({
             className="min-h-0 flex-1 rounded-lg bg-black object-contain"
             draggable={false}
             src={source}
-            onLoadedMetadata={(event) => { setDuration(event.currentTarget.duration); event.currentTarget.currentTime = currentSeconds; event.currentTarget.volume = volume }}
+            onLoadedMetadata={(event) => { setDuration(event.currentTarget.duration); event.currentTarget.currentTime = currentSeconds; event.currentTarget.volume = volume; event.currentTarget.muted = muted }}
             onPause={() => setPlaying(false)}
             onPlay={() => setPlaying(true)}
             onTimeUpdate={(event) => {
@@ -613,11 +641,12 @@ export default function VideoFrameEditWorkspace({
           <span className="min-w-0 truncate text-sm">Frame {session.currentOrdinal + 1} / {project.frames.length} · {currentSeconds.toFixed(3)}s</span>
           {session.mode === "video" ? (
             <>
-              <label className="ml-auto flex items-center gap-2 text-sm" title="Video volume">
-                {volume === 0 ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-                <span className="sr-only">Video volume</span>
+              <div className="ml-auto flex items-center gap-2 text-sm">
+                <button aria-label={muted || volume === 0 ? "Unmute video" : "Mute video"} className="rounded p-1 hover:bg-muted" onClick={toggleMuted} type="button">
+                  {muted || volume === 0 ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                </button>
                 <input aria-label="Video volume" className="w-24 accent-blue-500" max="1" min="0" onChange={(event) => { const next = Number(event.target.value); setVolume(next); if (videoRef.current) videoRef.current.volume = next }} step="0.05" type="range" value={volume} />
-              </label>
+              </div>
               <button className="flex items-center gap-2 rounded border px-3 py-2 text-sm" disabled={busy} onClick={downloadCanonicalFrame} type="button"><Download className="h-4 w-4" />Save Frame</button>
               <button className="flex items-center gap-2 rounded bg-primary px-3 py-2 text-sm text-primary-foreground" disabled={busy} onClick={() => openFrame(session.currentOrdinal)} type="button"><Edit3 className="h-4 w-4" />Edit frame</button>
             </>
