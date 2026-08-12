@@ -149,6 +149,9 @@ def test_writer_lease_heartbeat_abandonment_takeover_and_restart(tmp_path):
 def test_simultaneous_lease_acquisition_has_one_winner(tmp_path):
     creator = ProjectStore(tmp_path, instance_id="creator")
     created = creator.open()
+    creator.transact(created, ProjectMutation(
+        "save_frame_edit", {"id": "edit", "ordinal": 0, "document": {}}, {"render": b"render"},
+    ))
     project_id = created.project_id
     creator.close(created)
     barrier = threading.Barrier(2)
@@ -187,6 +190,9 @@ def test_paused_lease_publication_cannot_overwrite_confirmed_takeover(tmp_path):
     first_store = ProjectStore(tmp_path, instance_id="first", fault_hook=first_hook)
     creator_store = ProjectStore(tmp_path, instance_id="creator")
     created = creator_store.open()
+    creator_store.transact(created, ProjectMutation(
+        "save_frame_edit", {"id": "edit", "ordinal": 0, "document": {}}, {"render": b"render"},
+    ))
     project_id = created.project_id
     creator_store.close(created)
     first_result = []

@@ -46,7 +46,7 @@ jobs:
           cache: npm
           cache-dependency-path: web_app/package-lock.json
       - name: Install exact-frame test dependencies
-        run: python -m pip install pytest pytest-github-actions-annotate-failures fastapi python-multipart httpx pillow numpy
+        run: python -m pip install pytest pytest-timeout pytest-github-actions-annotate-failures fastapi python-multipart httpx pillow numpy
       - name: Install FFmpeg on macOS
         if: runner.os == 'macOS'
         run: brew install ffmpeg
@@ -67,7 +67,7 @@ jobs:
       - name: Verify FFmpeg availability
         run: ffmpeg -version
       - name: Qualify project workflow and real-media corpus
-        run: python -m pytest iopaint/tests/test_project_store.py iopaint/tests/test_project_workflow_portability.py iopaint/tests/test_frame_edit_api.py iopaint/tests/test_frame_media.py iopaint/tests/test_frame_media_real.py -q
+        run: python -m pytest iopaint/tests/test_project_store.py iopaint/tests/test_project_workflow_portability.py iopaint/tests/test_frame_edit_api.py iopaint/tests/test_frame_media.py iopaint/tests/test_frame_media_real.py -q --timeout=120
       - name: Install browser workflow dependencies
         working-directory: web_app
         run: npm ci
